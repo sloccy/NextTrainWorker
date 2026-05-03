@@ -11,7 +11,6 @@ export interface ArrivalEntry {
 }
 
 export interface StationInfo {
-  name: string;
   stop_ids: string[];
 }
 

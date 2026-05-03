@@ -199,7 +199,7 @@ export async function buildSchedule(): Promise<ScheduleBlob> {
       // merge stop_ids in case two different parent ids slug to the same key
       existing.stop_ids.push(...stopIds.filter(id => !existing.stop_ids.includes(id)));
     } else {
-      stations.set(slug, { name, stop_ids: stopIds });
+      stations.set(slug, { stop_ids: stopIds });
     }
   }
 

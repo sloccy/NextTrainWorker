@@ -16,7 +16,6 @@ export function buildSampleSchedule(): ScheduleBlob {
     },
     stations: {
       union_station: {
-        name: "Union Station",
         stop_ids: ["34667"],
       },
     },
