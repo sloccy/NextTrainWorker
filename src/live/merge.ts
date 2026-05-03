@@ -4,6 +4,7 @@ import type { TripPrediction } from "./tripupdate.js";
 const DENVER_TZ = "America/Denver";
 const MAX_PER_KEY = 6;
 const CUTOFF_SECONDS = 5 * 60;
+const HORIZON_SECONDS = 3 * 3600;
 
 const fmt = new Intl.DateTimeFormat("en-US", {
   timeZone: DENVER_TZ,
@@ -26,6 +27,8 @@ export function mergeScheduleWithLive(
     const arrivals: StoredArrivalEntry[] = [];
 
     for (const entry of keyEntry.entries) {
+      if (entry.scheduled_time < now - CUTOFF_SECONDS) continue;
+      if (entry.scheduled_time > now + HORIZON_SECONDS) break;
       const live = liveByTripId.get(entry.trip_id);
       const tripCanceled = live?.tripRelationship === 3; // CANCELED
 

@@ -15,3 +15,7 @@ preview_id = "3c50290fbef540bb83e9c2018ec3ab70"
 binding = "ARRIVALS_KV"
 id = "89572bd8828c45a0baff91b5b3da6d17"
 preview_id = "d82f08d8f756408fa2afa21bf4be5a0e"
+
+[observability.logs]
+enabled = true
+invocation_logs = true
