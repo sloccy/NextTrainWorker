@@ -10,7 +10,7 @@ function makeSchedule(): ScheduleBlob {
     generated_at: NOW,
     routes: { A: { color: "#57C1E9", short_name: "A", long_name: "A Line" } },
     stations: {
-      union_station: { name: "Union Station", stop_ids: ["34667"] },
+      union_station: { stop_ids: ["34667"] },
     },
     by_key: {
       "A:34667:E": {

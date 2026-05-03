@@ -38,16 +38,15 @@ export async function handleStations(env: Env): Promise<Response> {
     }
   }
 
-  const s = Object.entries(blob.stations ?? {})
-    .map(([slug, info]) => ({
+  const s = Object.keys(blob.stations ?? {})
+    .map((slug) => ({
       k: slug,
-      n: info.name,
       r: [...(stationRoutes.get(slug)?.values() ?? [])].sort(
         (a, b) => a.r.localeCompare(b.r) || a.d.localeCompare(b.d),
       ),
     }))
     .filter(s => s.r.length > 0)
-    .sort((a, b) => a.n.localeCompare(b.n));
+    .sort((a, b) => a.k.localeCompare(b.k));
 
   return json({ g: blob.generated_at, s }, 200, "public, max-age=3600");
 }

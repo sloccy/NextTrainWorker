@@ -60,5 +60,10 @@ export async function handleArrivals(request: Request, env: Env): Promise<Respon
   merged.sort((a, b) => a.eff - b.eff);
   const a: ArrivalEntry[] = merged.slice(0, MAX_ARRIVALS).map(({ r, t, s, l }) => ({ r, t, s, l }));
 
-  return json({ n: blob.generated_at + 65, a }, 200, "public, max-age=20");
+  // Never tell the client to refresh in the past. Cron is every minute, so
+  // generated_at + 65 is the *intended* next-refresh hint — but if cron lagged
+  // or the request lands after that point, clamp to "30 s from now" so the
+  // client doesn't see a stale timestamp and tight-loop.
+  const n = Math.max(blob.generated_at + 65, now + 30);
+  return json({ n, a }, 200, "public, max-age=20");
 }
