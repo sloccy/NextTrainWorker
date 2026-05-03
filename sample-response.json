@@ -1,0 +1,46 @@
+{
+  "server_now": 1730000000,
+  "fetched_at": 1729999800,
+  "stop_name": "Union Station Track 1",
+  "arrivals": [
+    {
+      "route": "A",
+      "route_color": "#57C1E9",
+      "direction": "E",
+      "headsign": "Denver Airport",
+      "scheduled": 1730000600,
+      "predicted": 1730000660,
+      "minutes_away": 11,
+      "display_time": "3:44 PM",
+      "status": "live",
+      "status_label": "On time",
+      "delay_seconds": 60
+    },
+    {
+      "route": "A",
+      "route_color": "#57C1E9",
+      "direction": "N",
+      "headsign": "Westminster",
+      "scheduled": 1730001500,
+      "predicted": null,
+      "minutes_away": 25,
+      "display_time": "3:58 PM",
+      "status": "scheduled",
+      "status_label": "Scheduled",
+      "delay_seconds": null
+    },
+    {
+      "route": "A",
+      "route_color": "#57C1E9",
+      "direction": "E",
+      "headsign": "Denver Airport",
+      "scheduled": 1730002400,
+      "predicted": null,
+      "minutes_away": 40,
+      "display_time": "4:13 PM",
+      "status": "canceled",
+      "status_label": "Canceled",
+      "delay_seconds": null
+    }
+  ]
+}

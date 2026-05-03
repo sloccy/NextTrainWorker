@@ -1,0 +1,24 @@
+name: Build GTFS Schedule
+
+on:
+  schedule:
+    - cron: '0 4 * * 0'  # Sunday 4am UTC, matches RTD's weekly update cadence
+  workflow_dispatch:       # manual trigger for initial seed and ad-hoc rebuilds
+
+jobs:
+  build-schedule:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Build and upload schedule to KV
+        run: npx tsx scripts/seed-schedule.ts
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
