@@ -46,16 +46,16 @@ See `sample-response.json` for the full response shape.
 npx wrangler login
 ```
 
-### 2. Create KV namespaces
+### 2. Create KV namespace and R2 bucket
 
 ```bash
 npx wrangler kv namespace create SCHEDULE_KV
 npx wrangler kv namespace create SCHEDULE_KV --preview
-npx wrangler kv namespace create ARRIVALS_KV
-npx wrangler kv namespace create ARRIVALS_KV --preview
+npx wrangler r2 bucket create nexttrainworker-arrivals
+npx wrangler r2 bucket create nexttrainworker-arrivals-preview
 ```
 
-Copy the four IDs into `wrangler.toml`.
+Copy the KV namespace IDs into `wrangler.toml`. The R2 bucket names are already set in `wrangler.toml`.
 
 ### 3. Deploy the Worker
 
@@ -81,7 +81,7 @@ gh workflow run build-schedule.yml --repo <your-username>/NextTrainWorker
 
 Or trigger it from the GitHub Actions UI: **Actions → Build GTFS Schedule → Run workflow**.
 
-After it completes (~30s), the Worker's per-minute cron will start populating `ARRIVALS_KV` automatically.
+After it completes (~30s), the Worker's per-minute cron will start populating the R2 arrivals bucket automatically.
 
 ### 6. Verify
 
@@ -110,10 +110,10 @@ Trigger the live refresh cron manually during `wrangler dev`:
 curl 'http://localhost:8787/__scheduled?cron=*+*+*+*+*'
 ```
 
-Read KV values locally:
+Read stored values locally:
 
 ```bash
-npx wrangler kv key get --binding=ARRIVALS_KV arrivals:current
+npx wrangler r2 object get nexttrainworker-arrivals-preview arrivals/current.json --pipe | jq '.generated_at, (.data | length)'
 npx wrangler kv key get --binding=SCHEDULE_KV schedule:current | jq '.stations | keys'
 ```
 
