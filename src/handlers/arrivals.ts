@@ -8,11 +8,11 @@ type MergedEntry = ArrivalEntry & { eff: number };
 
 export async function handleArrivals(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
-  const station = url.searchParams.get("station");
-  const routesParam = url.searchParams.get("routes");
+  const station = url.searchParams.get("s");
+  const routesParam = url.searchParams.get("r");
 
   if (!station || !routesParam) {
-    return json({ error: 'Missing required params: station and routes (e.g. station=union_station&routes=A:E,B:N)' }, 400);
+    return json({ error: 'Missing required params: s and r (e.g. s=union&r=A:E,B:N)' }, 400);
   }
 
   const routePairs: { route: string; dir: Direction }[] = [];

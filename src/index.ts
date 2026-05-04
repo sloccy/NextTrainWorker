@@ -8,8 +8,8 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    if (url.pathname === "/arrivals") return handleArrivals(request, env);
-    if (url.pathname === "/stations") return handleStations(env);
+    if (url.pathname === "/a") return handleArrivals(request, env);
+    if (url.pathname === "/s") return handleStations(env);
     if (url.pathname === "/config.html") return handleConfig(request);
 
     return new Response("Not found", { status: 404 });
