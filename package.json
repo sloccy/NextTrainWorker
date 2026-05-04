@@ -20,7 +20,6 @@
     "wrangler": "^4.87.0"
   },
   "dependencies": {
-    "fflate": "^0.8.2",
-    "gtfs-realtime-bindings": "^1.1.1"
+    "fflate": "^0.8.2"
   }
 }

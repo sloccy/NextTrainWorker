@@ -11,10 +11,10 @@ binding = "SCHEDULE_KV"
 id = "df8cce3477aa40f3a473f618d7fcb343"
 preview_id = "3c50290fbef540bb83e9c2018ec3ab70"
 
-[[kv_namespaces]]
-binding = "ARRIVALS_KV"
-id = "89572bd8828c45a0baff91b5b3da6d17"
-preview_id = "d82f08d8f756408fa2afa21bf4be5a0e"
+[[r2_buckets]]
+binding = "ARRIVALS_R2"
+bucket_name = "nexttrainworker-arrivals"
+preview_bucket_name = "nexttrainworker-arrivals-preview"
 
 [observability.logs]
 enabled = true

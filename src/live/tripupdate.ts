@@ -1,4 +1,4 @@
-import { transit_realtime } from "gtfs-realtime-bindings";
+import { decodeFeedMessage } from "./proto-decode.js";
 
 const TRIPUPDATE_URL = "https://open-data.rtd-denver.com/files/gtfs-rt/rtd/TripUpdate.pb";
 
@@ -17,7 +17,7 @@ export interface StopPrediction {
   stopRelationship: number;
 }
 
-export async function fetchTripUpdates(): Promise<Map<string, TripPrediction>> {
+export async function fetchTripUpdates(allowedTripIds?: Set<string>): Promise<Map<string, TripPrediction>> {
   const resp = await fetch(TRIPUPDATE_URL, {
     headers: { "Accept-Encoding": "gzip" },
   });
@@ -27,33 +27,7 @@ export async function fetchTripUpdates(): Promise<Map<string, TripPrediction>> {
   }
 
   const buffer = await resp.arrayBuffer();
-  const feed = transit_realtime.FeedMessage.decode(new Uint8Array(buffer));
-
-  const byTripId = new Map<string, TripPrediction>();
-
-  for (const entity of feed.entity) {
-    const tu = entity.tripUpdate;
-    if (!tu?.trip?.tripId) continue;
-
-    const tripId = tu.trip.tripId;
-    const stops = new Map<string, StopPrediction>();
-
-    for (const stu of tu.stopTimeUpdate ?? []) {
-      if (!stu.stopId) continue;
-      const time = stu.arrival?.time ?? stu.departure?.time ?? null;
-      stops.set(stu.stopId, {
-        time: typeof time === "number" ? time : (time != null ? Number(time) : null),
-        stopRelationship: stu.scheduleRelationship ?? 0,
-      });
-    }
-
-    byTripId.set(tripId, {
-      tripId,
-      routeId: tu.trip.routeId ?? "",
-      tripRelationship: tu.trip.scheduleRelationship ?? 0,
-      stops,
-    });
-  }
+  const byTripId = decodeFeedMessage(new Uint8Array(buffer), allowedTripIds);
 
   console.log(`[tripupdate] parsed ${byTripId.size} trip updates`);
   return byTripId;

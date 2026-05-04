@@ -1,39 +1,40 @@
 export type Direction = "N" | "S" | "E" | "W";
 
-export type ArrivalStatus = "live" | "scheduled" | "canceled" | "skipped" | "added";
-
 // Shape of each arrival in the HTTP /arrivals response
+// l is absent for scheduled (default); present for live/canceled/skipped/added
 export interface ArrivalEntry {
-  r: string;        // route short name
-  t: string;        // display time ("3:44 PM")
-  s: ArrivalStatus; // status enum
-  l: string;        // status label ("On time", "Delayed 3 min")
+  r: string;   // route short name
+  t: string;   // display time ("3:44 PM")
+  l?: string;  // absent="Scheduled", "On time"/"Delayed N min"=live, "Canceled", "Skipped", "Added"
 }
 
 export interface StationInfo {
   stop_ids: string[];
 }
 
-// Shape stored in ARRIVALS_KV under "arrivals:current"
+export interface RouteWire {
+  c: string | null;           // route color hex
+  h: Record<string, string>;  // direction → headsign
+}
+
 export interface ArrivalsBlob {
   generated_at: number;
   stations: Record<string, StationInfo>;
+  routes: Record<string, RouteWire>;
   data: Record<string, ArrivalsKeyEntry>;
 }
 
 export interface ArrivalsKeyEntry {
-  route_color: string | null; // used by /stations handler
-  headsign: string;           // representative headsign for /stations handler
-  arrivals: StoredArrivalEntry[];
+  a: StoredArrivalEntry[];
 }
 
-// Per-arrival shape stored in the KV blob
+// Per-arrival shape stored in R2 blob.
+// r is omitted (derivable from the data key prefix).
+// e is absolute unix time — filter/sort only, not in HTTP response.
 export interface StoredArrivalEntry {
-  r: string;        // route short name
-  eff: number;      // effective unix time (predicted ?? scheduled) — filter/sort only, not in HTTP response
-  t: string;        // pre-formatted display time
-  s: ArrivalStatus;
-  l: string;        // pre-formatted status label
+  e: number;
+  t: string;
+  l?: string;
 }
 
 // Shape stored in SCHEDULE_KV under "schedule:current"
@@ -64,5 +65,5 @@ export interface ScheduleEntry {
 
 export interface Env {
   SCHEDULE_KV: KVNamespace;
-  ARRIVALS_KV: KVNamespace;
+  ARRIVALS_R2: R2Bucket;
 }

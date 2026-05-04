@@ -1,10 +1,11 @@
-import type { Env, ArrivalsBlob, ArrivalEntry, Direction } from "../types.js";
+import type { Env, ArrivalsBlob, Direction } from "../types.js";
+import { getArrivals } from "../r2.js";
 import { json } from "./response.js";
 
 const VALID_DIRS = new Set<Direction>(["N", "S", "E", "W"]);
 const MAX_ARRIVALS = 10;
 
-type MergedEntry = ArrivalEntry & { eff: number };
+type MergedEntry = { r: string; t: string; l?: string; eff: number };
 
 export async function handleArrivals(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -27,7 +28,7 @@ export async function handleArrivals(request: Request, env: Env): Promise<Respon
     routePairs.push({ route, dir: dir as Direction });
   }
 
-  const blob = await env.ARRIVALS_KV.get<ArrivalsBlob>("arrivals:current", "json");
+  const blob = await getArrivals(env);
   if (!blob) {
     return json({ error: "Arrivals data not yet available. Cron may not have run yet." }, 503);
   }
@@ -46,9 +47,9 @@ export async function handleArrivals(request: Request, env: Env): Promise<Respon
       const entry = blob.data[key];
       if (!entry) continue;
 
-      for (const a of entry.arrivals) {
-        if (a.eff < now - 60) continue;
-        merged.push({ r: a.r, t: a.t, s: a.s, l: a.l, eff: a.eff });
+      for (const a of entry.a) {
+        if (a.e < now - 60) continue;
+        merged.push({ r: route, t: a.t, l: a.l, eff: a.e });
       }
     }
   }
@@ -58,7 +59,7 @@ export async function handleArrivals(request: Request, env: Env): Promise<Respon
   }
 
   merged.sort((a, b) => a.eff - b.eff);
-  const a: ArrivalEntry[] = merged.slice(0, MAX_ARRIVALS).map(({ r, t, s, l }) => ({ r, t, s, l }));
+  const a = merged.slice(0, MAX_ARRIVALS).map(({ r, t, l }) => l !== undefined ? { r, t, l } : { r, t });
 
   // Never tell the client to refresh in the past. Cron is every minute, so
   // generated_at + 65 is the *intended* next-refresh hint — but if cron lagged

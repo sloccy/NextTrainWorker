@@ -1,35 +1,44 @@
-import type { Env, ScheduleBlob } from "../types.js";
-import { getSchedule, writeArrivalsIfChanged } from "../kv.js";
-import { fetchTripUpdates, type TripPrediction } from "../live/tripupdate.js";
-import { mergeScheduleWithLive } from "../live/merge.js";
+import type { Env } from "../types.js";
+import { getSchedule, getScheduleVersion } from "../kv.js";
+import { writeArrivals } from "../r2.js";
+import { fetchTripUpdates } from "../live/tripupdate.js";
+import { buildBaseline, applyLive, type Baseline } from "../live/merge.js";
 import { buildSampleSchedule } from "../live/sample-schedule.js";
 
-let s_schedCache: { schedule: ScheduleBlob; loadedAt: number } | null = null;
-const SCHED_TTL_MS = 60 * 60 * 1000;
+interface CachedBaseline {
+  version: string;
+  baseline: Baseline;
+}
 
-async function getSchedCached(env: Env): Promise<ScheduleBlob> {
-  const now = Date.now();
-  if (s_schedCache && now - s_schedCache.loadedAt < SCHED_TTL_MS) {
-    return s_schedCache.schedule;
+let s_cached: CachedBaseline | null = null;
+
+async function getCached(env: Env): Promise<Baseline> {
+  const remoteVersion = (await getScheduleVersion(env)) ?? "";
+
+  if (s_cached && s_cached.version === remoteVersion) {
+    return s_cached.baseline;
   }
-  const schedule = await getSchedule(env) ?? buildSampleSchedule();
-  s_schedCache = { schedule, loadedAt: now };
-  return schedule;
+
+  const schedule = (await getSchedule(env)) ?? buildSampleSchedule();
+  const baseline = buildBaseline(schedule);
+  s_cached = { version: remoteVersion, baseline };
+  console.log(`[refresh-live] baseline rebuilt for version=${remoteVersion}`);
+  return baseline;
 }
 
 export async function handleRefreshLive(env: Env): Promise<void> {
-  const schedule = await getSchedCached(env);
+  const baseline = await getCached(env);
 
-  let liveByTripId: Map<string, TripPrediction>;
+  let liveByTripId;
   try {
-    liveByTripId = await fetchTripUpdates();
+    liveByTripId = await fetchTripUpdates(baseline.allowedTripIds);
   } catch (err) {
     console.error("[refresh-live] GTFS-RT fetch failed:", err);
     liveByTripId = new Map();
   }
 
-  const blob = mergeScheduleWithLive(schedule, liveByTripId);
-  const wrote = await writeArrivalsIfChanged(env, blob);
+  const json = applyLive(baseline, liveByTripId);
+  await writeArrivals(env, json);
 
-  console.log(`[refresh-live] done — ${Object.keys(blob.data).length} keys, wrote=${wrote}`);
+  console.log("[refresh-live] done");
 }
