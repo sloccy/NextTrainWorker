@@ -47,7 +47,7 @@ export async function buildSchedule(): Promise<ScheduleBlob> {
         route_id:     row.route_id,
         service_id:   row.service_id,
         direction_id: parseInt(row.direction_id ?? "0"),
-        headsign:     (row.trip_headsign ?? "").replace(/\s+Station\b/gi, "").trim(),
+        headsign:     (row.trip_headsign ?? "").replace(/\bStation\b/gi, "").replace(/\s+/g, " ").trim(),
       });
     }),
 
@@ -214,11 +214,11 @@ export async function buildSchedule(): Promise<ScheduleBlob> {
 }
 
 function slugify(name: string): string {
-  return name.toLowerCase()
+  return name
+    .replace(/\bStation\b/gi, "")
+    .toLowerCase()
     .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_|_$/g, "")
-    .replace(/_station$/, "")
-    .replace(/^station_/, "");
+    .replace(/^_|_$/g, "");
 }
 
 // Parses a GTFS "HH:MM:SS" time string (may exceed 24:00) into seconds
