@@ -1,8 +1,9 @@
 import type { Env, ArrivalsBlob } from "../types.js";
+import { getArrivals } from "../r2.js";
 import { json } from "./response.js";
 
 export async function handleStations(env: Env): Promise<Response> {
-  const blob = await env.ARRIVALS_KV.get<ArrivalsBlob>("arrivals:current", "json");
+  const blob = await getArrivals(env);
   if (!blob) {
     return json({ error: "Schedule data not yet available. Cron may not have run yet." }, 503);
   }
@@ -21,7 +22,7 @@ export async function handleStations(env: Env): Promise<Response> {
     const [route, stopId, dir] = key.split(":");
     const stationSlug = stopToStation.get(stopId);
     if (!stationSlug) continue;
-    if (!keyEntry.arrivals.length) continue;
+    if (!keyEntry.a.length) continue;
 
     if (!stationRoutes.has(stationSlug)) {
       stationRoutes.set(stationSlug, new Map());
@@ -29,11 +30,12 @@ export async function handleStations(env: Env): Promise<Response> {
 
     const comboKey = `${route}:${dir}`;
     if (!stationRoutes.get(stationSlug)!.has(comboKey)) {
+      const routeInfo = blob.routes?.[route];
       stationRoutes.get(stationSlug)!.set(comboKey, {
         r: route,
-        c: keyEntry.route_color,
+        c: routeInfo?.c ?? null,
         d: dir,
-        h: keyEntry.headsign,
+        h: routeInfo?.h?.[dir] ?? "",
       });
     }
   }
