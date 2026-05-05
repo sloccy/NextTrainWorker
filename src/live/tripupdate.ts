@@ -17,7 +17,7 @@ export interface StopPrediction {
   stopRelationship: number;
 }
 
-export async function fetchTripUpdates(allowedTripIds?: Set<string>): Promise<Map<string, TripPrediction>> {
+export async function fetchTripUpdates(): Promise<Map<number, TripPrediction>> {
   const resp = await fetch(TRIPUPDATE_URL, {
     headers: { "Accept-Encoding": "gzip" },
   });
@@ -27,8 +27,8 @@ export async function fetchTripUpdates(allowedTripIds?: Set<string>): Promise<Ma
   }
 
   const buffer = await resp.arrayBuffer();
-  const byTripId = decodeFeedMessage(new Uint8Array(buffer), allowedTripIds);
+  const byTripIdHash = decodeFeedMessage(new Uint8Array(buffer));
 
-  console.log(`[tripupdate] parsed ${byTripId.size} trip updates`);
-  return byTripId;
+  console.log(`[tripupdate] parsed ${byTripIdHash.size} trip updates`);
+  return byTripIdHash;
 }
