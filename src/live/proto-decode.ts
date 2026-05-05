@@ -4,20 +4,10 @@
  * Reads only the fields used by this worker:
  *   entity[].trip_update.trip.{trip_id, schedule_relationship}
  *   entity[].trip_update.stop_time_update[].{stop_id, arrival.time, departure.time, schedule_relationship}
- *
- * All other fields (vehicle positions, alerts, shapes, congestion, etc.) are
- * skipped in O(1) — advance pos by field length, no allocation.
- *
- * Field number reference (from gtfs-realtime.proto):
- *   FeedMessage:       entity=2
- *   FeedEntity:        trip_update=3
- *   TripUpdate:        trip=1, stop_time_update=2
- *   TripDescriptor:    trip_id=1, schedule_relationship=4
- *   StopTimeUpdate:    arrival=2, departure=3, stop_id=4, schedule_relationship=5
- *   StopTimeEvent:     time=2
  */
 
 import type { TripPrediction, StopPrediction } from "./tripupdate.js";
+import { hashTripId } from "../binary.js";
 
 const td = new TextDecoder();
 
@@ -66,38 +56,38 @@ class Reader {
   }
 }
 
-export function decodeFeedMessage(buf: Uint8Array, allowed?: Set<string>): Map<string, TripPrediction> {
-  const out = new Map<string, TripPrediction>();
+export function decodeFeedMessage(buf: Uint8Array): Map<number, TripPrediction> {
+  const out = new Map<number, TripPrediction>();
   const r = new Reader(buf);
   while (r.pos < buf.length) {
     const [f, w] = r.tag();
-    if (f === 2 && w === 2) parseEntity(r.bytes(), out, allowed);
+    if (f === 2 && w === 2) parseEntity(r.bytes(), out);
     else r.skip(w);
   }
   return out;
 }
 
-function parseEntity(buf: Uint8Array, out: Map<string, TripPrediction>, allowed?: Set<string>): void {
+function parseEntity(buf: Uint8Array, out: Map<number, TripPrediction>): void {
   const r = new Reader(buf);
   while (r.pos < buf.length) {
     const [f, w] = r.tag();
-    if (f === 3 && w === 2) parseTripUpdate(r.bytes(), out, allowed);
+    if (f === 3 && w === 2) parseTripUpdate(r.bytes(), out);
     else r.skip(w);
   }
 }
 
-function parseTripUpdate(buf: Uint8Array, out: Map<string, TripPrediction>, allowed?: Set<string>): void {
+function parseTripUpdate(buf: Uint8Array, out: Map<number, TripPrediction>): void {
   const r = new Reader(buf);
-  let tripId = "";
+  let tripIdHash = 0;
   let tripRelationship = 0;
   const stops = new Map<string, StopPrediction>();
 
   while (r.pos < buf.length) {
     const [f, w] = r.tag();
     if (f === 1 && w === 2) {
-      [tripId, tripRelationship] = parseTripDescriptor(r.bytes());
-      // RTD encodes trip descriptor first; early-exit if not a tracked trip
-      if (allowed && tripId && !allowed.has(tripId)) return;
+      const [hash, rel] = parseTripDescriptor(r.bytes());
+      tripIdHash = hash;
+      tripRelationship = rel;
     } else if (f === 2 && w === 2) {
       const [stopId, time, rel] = parseStopTimeUpdate(r.bytes());
       if (stopId) stops.set(stopId, { time, stopRelationship: rel });
@@ -106,20 +96,20 @@ function parseTripUpdate(buf: Uint8Array, out: Map<string, TripPrediction>, allo
     }
   }
 
-  if (tripId) out.set(tripId, { tripId, routeId: "", tripRelationship, stops });
+  if (tripIdHash) out.set(tripIdHash, { tripId: "", routeId: "", tripRelationship, stops });
 }
 
-function parseTripDescriptor(buf: Uint8Array): [tripId: string, schedRel: number] {
+function parseTripDescriptor(buf: Uint8Array): [tripIdHash: number, schedRel: number] {
   const r = new Reader(buf);
-  let tripId = "";
+  let tripIdHash = 0;
   let schedRel = 0;
   while (r.pos < buf.length) {
     const [f, w] = r.tag();
-    if (f === 1 && w === 2) tripId = r.str();
+    if (f === 1 && w === 2) tripIdHash = hashTripId(r.str());
     else if (f === 4 && w === 0) schedRel = r.varint();
     else r.skip(w);
   }
-  return [tripId, schedRel];
+  return [tripIdHash, schedRel];
 }
 
 function parseStopTimeUpdate(buf: Uint8Array): [stopId: string, time: number | null, schedRel: number] {
