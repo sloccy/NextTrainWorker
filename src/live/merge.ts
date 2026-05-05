@@ -23,11 +23,11 @@ export const fmt = new Intl.DateTimeFormat("en-US", {
 export interface BaselineKeyEntry {
   route_id: string;
   route_short: string;
-  route_color: string | null;
+  color: { r: number, g: number, b: number };
   dir: string;
   headsign: string;
   /** Sorted by e ascending — full set */
-  arrivals: StoredArrivalEntry[];
+  arrivals: Array<StoredArrivalEntry & { mins: number }>;
   /** Parallel to arrivals, holds trip_id per entry (off-wire) */
   tripIds: string[];
   /** Mutable: index of first not-yet-past entry. Advanced by applyLive each tick. */
@@ -57,17 +57,28 @@ export function buildBaseline(schedule: ScheduleBlob, nowOverride?: number): Bas
   const data: Record<string, BaselineKeyEntry> = {};
   const byTrip = new Map<string, BaselineSlot[]>();
 
+  const stopIdToSlug = new Map<string, string>();
+  for (const [slug, info] of Object.entries(schedule.stations ?? {})) {
+    for (const sid of info.stop_ids) stopIdToSlug.set(sid, slug);
+  }
+
   for (const [key, keyEntry] of Object.entries(schedule.by_key)) {
-    const [routeId, , dir] = key.split(":");
+    const [routeId, stopId, dir] = key.split(":");
+    const slug = stopIdToSlug.get(stopId);
+    if (!slug) continue; // Skip keys not mapped to a station we care about
+
     const routeInfo = schedule.routes[routeId];
-    const arrivals: StoredArrivalEntry[] = [];
+    const arrivals: Array<StoredArrivalEntry & { mins: number }> = [];
     const tripIds: string[] = [];
 
     for (const entry of keyEntry.entries) {
       if (entry.scheduled_time < cutoff) continue;
+      const date = new Date(entry.scheduled_time * 1000);
+      const t = fmt.format(date);
       arrivals.push({
         e: entry.scheduled_time,
-        t: fmt.format(new Date(entry.scheduled_time * 1000)),
+        t,
+        mins: parseMins(t),
       });
       tripIds.push(entry.trip_id);
     }
@@ -81,7 +92,7 @@ export function buildBaseline(schedule: ScheduleBlob, nowOverride?: number): Bas
     data[key] = {
       route_id: routeId,
       route_short: routeInfo?.short_name ?? routeId,
-      route_color: routeInfo?.color ?? null,
+      color: hexToRgb(routeInfo?.color ?? null),
       dir,
       headsign: keyEntry.entries[0]?.headsign ?? "",
       arrivals: sortedArr,
@@ -98,26 +109,23 @@ export function buildBaseline(schedule: ScheduleBlob, nowOverride?: number): Bas
   }
 
   const stopIdByKey = new Map<string, string>();
-  const slugByStopId = new Map<string, string>();
-  for (const key in data) {
-    const stopId = key.split(":")[1];
-    stopIdByKey.set(key, stopId);
-  }
+  for (const key in data) stopIdByKey.set(key, key.split(":")[1]);
 
   const stationEntries: StationWire[] = [];
   for (const [slug, info] of Object.entries(schedule.stations ?? {})) {
     const routesByDir = new Map<string, { r: string, c: string | null, d: string, h: string }>();
+    let hasKeys = false;
     for (const stopId of info.stop_ids) {
-      slugByStopId.set(stopId, slug);
-      // Find all keys for this stop to build routes list
       for (const key in data) {
         if (key.split(":")[1] === stopId) {
+          hasKeys = true;
           const entry = data[key];
           const rkey = `${entry.route_short}:${entry.dir}`;
           if (!routesByDir.has(rkey)) {
+            const routeInfo = schedule.routes[entry.route_id];
             routesByDir.set(rkey, {
               r: entry.route_short,
-              c: entry.route_color,
+              c: routeInfo?.color ?? null,
               d: entry.dir,
               h: entry.headsign
             });
@@ -125,10 +133,12 @@ export function buildBaseline(schedule: ScheduleBlob, nowOverride?: number): Bas
         }
       }
     }
-    stationEntries.push({
-      k: slug,
-      r: [...routesByDir.values()].sort((a, b) => a.r.localeCompare(b.r) || a.d.localeCompare(b.d))
-    });
+    if (hasKeys) {
+      stationEntries.push({
+        k: slug,
+        r: [...routesByDir.values()].sort((a, b) => a.r.localeCompare(b.r) || a.d.localeCompare(b.d))
+      });
+    }
   }
 
   const stationsBin = buildStationsBin(stationEntries, schedule.generated_at);
@@ -140,9 +150,17 @@ export function buildBaseline(schedule: ScheduleBlob, nowOverride?: number): Bas
     byTrip,
     allowedTripIds: new Set(byTrip.keys()),
     stopIdByKey,
-    slugByStopId,
+    slugByStopId: stopIdToSlug,
     stationsBin,
   };
+}
+
+function parseMins(t: string): number {
+  const [time, p] = t.split(" ");
+  let [h, m] = time.split(":").map(Number);
+  if (p === "PM" && h < 12) h += 12;
+  if (p === "AM" && h === 12) h = 0;
+  return h * 60 + m;
 }
 
 /**
@@ -172,7 +190,6 @@ export function applyLive(
       baseEntry.startIdx++;
     }
 
-    const { r, g, b } = hexToRgb(baseEntry.route_color);
     let list = groupedPatched.get(slug);
     if (!list) { list = []; groupedPatched.set(slug, list); }
 
@@ -184,11 +201,14 @@ export function applyLive(
       if (patched.e < cutoff || patched.e > horizon) continue;
 
       list.push({
-        r, g, b,
+        r: baseEntry.color.r,
+        g: baseEntry.color.g,
+        b: baseEntry.color.b,
         route: baseEntry.route_short,
         dir: baseEntry.dir,
         headsign: baseEntry.headsign,
-        time: patched.t,
+        timeMins: parseMins(patched.t),
+        timeStr: patched.t,
         label: patched.l ?? "",
         e: patched.e,
       });
@@ -203,6 +223,7 @@ export function applyLive(
 
   return buildArrivalsBin(finalMap, now);
 }
+
 
 function patchEntry(
   base: StoredArrivalEntry,
