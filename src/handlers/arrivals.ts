@@ -14,10 +14,20 @@ export async function handleArrivals(request: Request, env: Env): Promise<Respon
   }
 
   const routePairs: { route: string; dir: string }[] = [];
-  for (const pair of routesParam.split(",")) {
-    const [route, dir] = pair.trim().split(":");
-    if (!route || !dir || !VALID_DIRS.has(dir as Direction)) {
-      return new Response(`Invalid route:dir pair: ${pair}`, { status: 400 });
+  const dirMap: Record<string, Direction> = {
+    "0": "N",
+    "1": "S",
+    "2": "E",
+    "3": "W",
+  };
+
+  for (let i = 0; i < routesParam.length; i += 2) {
+    const route = routesParam[i];
+    const dirNum = routesParam[i + 1];
+    const dir = dirMap[dirNum];
+
+    if (!route || !dir) {
+      return new Response(`Invalid route.dir chunk at index ${i}: ${route}${dirNum}`, { status: 400 });
     }
     routePairs.push({ route, dir });
   }
