@@ -4,10 +4,12 @@ Cloudflare Worker that serves RTD Denver rail arrivals to a Pebble watch app.
 
 ## Architecture
 
-- **Two KV namespaces**: `SCHEDULE_KV` (weekly static GTFS schedule) and `ARRIVALS_KV` (per-minute live blend)
-- **GitHub Actions** builds the static schedule weekly and writes it to `SCHEDULE_KV` (avoids Cloudflare's free-tier CPU limit)
-- **One Worker cron** (`* * * * *`): fetches GTFS-RT, merges with schedule, writes to `ARRIVALS_KV`
-- **Two HTTP endpoints**: `GET /arrivals` and `GET /stations`
+- **KV namespace**: `SCHEDULE_KV` (legacy/minimal data)
+- **R2 bucket**: `nexttrainworker-arrivals` (serves `current.bin` and `stations.bin`)
+- **Baseline bundling**: The static schedule is bundled into the worker as a generated binary blob (`src/baseline.generated.ts`).
+- **GitHub Actions**: Builds the static schedule every 12h, uploads `stations.bin` to R2, and deploys the worker with the updated baseline.
+- **One Worker cron** (`* * * * *`): fetches GTFS-RT, merges with bundled baseline, writes `current.bin` to R2.
+- **Two HTTP endpoints**: `GET /a` (arrivals) and `GET /s` (stations).
 
 ## Endpoints
 
@@ -73,7 +75,7 @@ The static schedule is built by GitHub Actions (not the Worker) to avoid Cloudfl
 
 ### 5. Seed initial data
 
-Trigger the workflow manually — it runs the full schedule build and uploads to KV:
+Trigger the workflow manually — it runs the full schedule build, uploads `stations.bin` to R2, and deploys the worker with the new baseline:
 
 ```bash
 gh workflow run build-schedule.yml --repo <your-username>/NextTrainWorker
@@ -81,7 +83,7 @@ gh workflow run build-schedule.yml --repo <your-username>/NextTrainWorker
 
 Or trigger it from the GitHub Actions UI: **Actions → Build GTFS Schedule → Run workflow**.
 
-After it completes (~30s), the Worker's per-minute cron will start populating the R2 arrivals bucket automatically.
+After it completes (~1 min), the Worker's per-minute cron will start populating the R2 `arrivals/current.bin` file automatically.
 
 ### 6. Verify
 
@@ -103,6 +105,16 @@ gh workflow run build-schedule.yml --repo <your-username>/NextTrainWorker
 ```bash
 npm run dev
 ```
+
+### Initial setup (Typecheck)
+
+Because the baseline schedule is generated and ignored by git, you must generate it once locally for typechecking and local execution to work:
+
+```bash
+npx tsx scripts/seed-schedule.ts --skip-r2
+```
+
+### Triggering live refresh
 
 Trigger the live refresh cron manually during `wrangler dev`:
 
