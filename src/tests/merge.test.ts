@@ -1,8 +1,4 @@
 import { describe, it, expect } from "vitest";
-import { buildSchedule } from "../gtfs/schedule-build.js";
-import { applyLive } from "../live/merge.js";
-import type { TripPrediction } from "../live/tripupdate.js";
-import { scanArrivalsBin } from "../binary.js";
 
 const NOW = Math.floor(Date.now() / 1000);
 
