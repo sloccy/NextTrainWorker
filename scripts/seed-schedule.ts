@@ -7,26 +7,32 @@ const TMP_PATH = '/tmp/nexttrainworker-schedule.json';
 
 async function main() {
   console.log('[seed] Building schedule...');
-  const schedule = await buildSchedule();
-  const body = JSON.stringify(schedule);
-  console.log(`[seed] Built — ${(body.length / 1024 / 1024).toFixed(1)} MB`);
+  const { generatedAt, baselineBin, stationsBin } = await buildSchedule();
+  console.log(`[seed] Built — baseline=${(baselineBin.length / 1024).toFixed(1)} KB, stations=${(stationsBin.length / 1024).toFixed(1)} KB`);
 
-  writeFileSync(TMP_PATH, body);
   try {
-    console.log('[seed] Uploading schedule:current...');
+    console.log('[seed] Uploading baseline:bin...');
+    writeFileSync(TMP_PATH, baselineBin);
     execSync(
-      `npx wrangler kv key put "schedule:current" --path "${TMP_PATH}" --namespace-id "${NAMESPACE_ID}"`,
+      `npx wrangler kv key put "baseline:bin" --path "${TMP_PATH}" --namespace-id "${NAMESPACE_ID}"`,
       { stdio: 'inherit' },
     );
 
-    const version = String(schedule.generated_at);
+    console.log('[seed] Uploading stations:bin...');
+    writeFileSync(TMP_PATH, stationsBin);
+    execSync(
+      `npx wrangler kv key put "stations:bin" --path "${TMP_PATH}" --namespace-id "${NAMESPACE_ID}"`,
+      { stdio: 'inherit' },
+    );
+
+    const version = String(generatedAt);
     console.log(`[seed] Uploading schedule:version = ${version}...`);
     execSync(
       `npx wrangler kv key put "schedule:version" "${version}" --namespace-id "${NAMESPACE_ID}"`,
       { stdio: 'inherit' },
     );
   } finally {
-    unlinkSync(TMP_PATH);
+    if (require('fs').existsSync(TMP_PATH)) unlinkSync(TMP_PATH);
   }
 
   console.log('[seed] Done.');
