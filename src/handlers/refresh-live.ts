@@ -1,46 +1,40 @@
 import type { Env } from "../types.js";
-import { getSchedule, getScheduleVersion } from "../kv.js";
+import { getScheduleVersion } from "../kv.js";
 import { writeArrivalsBin, writeStationsBin } from "../r2.js";
 import { fetchTripUpdates } from "../live/tripupdate.js";
-import { buildBaseline, applyLive, type Baseline } from "../live/merge.js";
-import { buildSampleSchedule } from "../live/sample-schedule.js";
-
-interface CachedBaseline {
-  version: string;
-  baseline: Baseline;
-}
-
-let s_cached: CachedBaseline | null = null;
+import { applyLive } from "../live/merge.js";
 
 export async function handleRefreshLive(env: Env): Promise<void> {
   const remoteVersion = (await getScheduleVersion(env)) ?? "";
-  let baselineJustRebuilt = false;
-  let baseline: Baseline;
-
-  if (s_cached && s_cached.version === remoteVersion) {
-    baseline = s_cached.baseline;
-  } else {
-    const schedule = (await getSchedule(env)) ?? buildSampleSchedule();
-    baseline = buildBaseline(schedule);
-    s_cached = { version: remoteVersion, baseline };
-    baselineJustRebuilt = true;
-    console.log(`[refresh-live] baseline rebuilt for version=${remoteVersion}`);
+  
+  // Fetch binary baseline from KV
+  const baselineBin = await env.SCHEDULE_KV.get("baseline:bin", { type: "arrayBuffer" });
+  if (!baselineBin) {
+    console.error("[refresh-live] baseline:bin not found in KV");
+    return;
   }
+
+  const allowedTripIds = new Set<string>(); // Worker no longer needs tripId list for fetch
+  // Optimization: we could store allowedTripIds in KV as well to filter GTFS-RT fetch,
+  // but for now let's just fetch all.
 
   let liveByTripId;
   try {
-    liveByTripId = await fetchTripUpdates(baseline.allowedTripIds);
+    liveByTripId = await fetchTripUpdates();
   } catch (err) {
     console.error("[refresh-live] GTFS-RT fetch failed:", err);
     liveByTripId = new Map();
   }
 
-  const bin = applyLive(baseline, liveByTripId);
+  const bin = applyLive(new Uint8Array(baselineBin), liveByTripId);
   await writeArrivalsBin(env, bin);
 
-  if (baselineJustRebuilt) {
-    await writeStationsBin(env, baseline.stationsBin);
+  // Periodically sync stations.bin from KV to R2
+  // For now, let's just do it every tick or based on a version change
+  const stationsBin = await env.SCHEDULE_KV.get("stations:bin", { type: "arrayBuffer" });
+  if (stationsBin) {
+    await writeStationsBin(env, new Uint8Array(stationsBin));
   }
 
-  console.log("[refresh-live] done");
+  console.log(`[refresh-live] done (v=${remoteVersion})`);
 }
