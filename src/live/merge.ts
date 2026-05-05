@@ -17,14 +17,19 @@ export function applyLive(
   nowOverride?: number,
 ): Uint8Array {
   const now = nowOverride ?? Math.floor(Date.now() / 1000);
-  const cutoff = now - CUTOFF_SECONDS;
-  const horizon = now + HORIZON_SECONDS;
 
   let pos = 0;
-  // const baselineGeneratedAt = ((baselineBin[pos++] << 24) | (baselineBin[pos++] << 16) | (baselineBin[pos++] << 8) | baselineBin[pos++]) >>> 0;
-  pos += 4; // Skip generatedAt
+  // Header: [u32 genAt][u32 baseMidnightUTC]
+  // pos 0..3: genAt (skip)
+  // pos 4..7: baseMidnightUTC
+  const baseMidnightUTC = ((baselineBin[4] << 24) | (baselineBin[5] << 16) | (baselineBin[6] << 8) | baselineBin[7]) >>> 0;
+  pos = 8;
 
-  // Read dictionary (only for routes and labels)
+  const currentMonoMins = Math.floor((now - baseMidnightUTC) / 60);
+  const cutoffMonoMins = currentMonoMins - (CUTOFF_SECONDS / 60);
+  const horizonMonoMins = currentMonoMins + (HORIZON_SECONDS / 60);
+
+  // Read dictionary
   const dictCount = (baselineBin[pos++] << 8) | baselineBin[pos++];
   const dict: string[] = [];
   for (let i = 0; i < dictCount; i++) {
@@ -46,6 +51,25 @@ export function applyLive(
 
   const stationArrivals = new Map<string, BinArrival[]>();
 
+  // Binary search helper for the 8-byte entries in a station's data block
+  function findStartIndex(buf: Uint8Array, startPos: number, count: number, targetMonoMins: number): number {
+    let low = 0;
+    let high = count - 1;
+    let result = count; // Default to 'no match'
+    while (low <= high) {
+      const mid = (low + high) >>> 1;
+      const entryPos = startPos + (mid * 8);
+      const monoMins = (buf[entryPos + 2] << 8) | buf[entryPos + 3];
+      if (monoMins >= targetMonoMins) {
+        result = mid;
+        high = mid - 1;
+      } else {
+        low = mid + 1;
+      }
+    }
+    return result;
+  }
+
   // Iterate through stations in baseline
   pos = indexStart;
   for (let i = 0; i < numStations; i++) {
@@ -57,44 +81,32 @@ export function applyLive(
     
     // Jump to data block for this station
     let dpos = dataOffset;
-    const count = (baselineBin[dpos++] << 8) | baselineBin[dpos++];
+    const totalCount = (baselineBin[dpos++] << 8) | baselineBin[dpos++];
+    const dataStart = dpos;
+
+    // Use binary search to find start of 3-hour window
+    const startIndex = findStartIndex(baselineBin, dataStart, totalCount, cutoffMonoMins);
     const arrivals: BinArrival[] = [];
 
-    for (let j = 0; j < count; j++) {
-      const routeIdx = baselineBin[dpos++];
-      const dirCode = baselineBin[dpos++];
-      const timeMins = (baselineBin[dpos++] << 8) | baselineBin[dpos++];
-      const tripIdHash = ((baselineBin[dpos++] << 24) | (baselineBin[dpos++] << 16) | (baselineBin[dpos++] << 8) | baselineBin[dpos++]) >>> 0;
+    // Scan forward from binary search result
+    for (let j = startIndex; j < totalCount; j++) {
+      const entryPos = dataStart + (j * 8);
+      const routeIdx = baselineBin[entryPos];
+      const dirCode = baselineBin[entryPos + 1];
+      const monoMins = (baselineBin[entryPos + 2] << 8) | baselineBin[entryPos + 3];
+      const tripIdHash = ((baselineBin[entryPos + 4] << 24) | (baselineBin[entryPos + 5] << 16) | (baselineBin[entryPos + 6] << 8) | baselineBin[entryPos + 7]) >>> 0;
 
-      // Filter and patch
+      // Stop if we exit the 3-hour horizon
+      if (monoMins > horizonMonoMins) break;
+
       const live = livePatches.get(tripIdHash);
       let label = "";
-      let effectiveMins = timeMins;
-
-      // Note: Full patching requires stopId for the GTFS-RT lookup.
-      // Since baseline.bin doesn't have stopIds (to keep it lean), we use a simplified 
-      // trip-level relationship (Canceled). For full delay patching, we'd need
-      // stopIdHash or similar. Let's assume for now that trip-level info is sufficient
-      // or that the worker can derive the stopId if needed.
-      // Actually, let's just use the trip relationship for now.
-      
-      if (live) {
-        if (live.tripRelationship === 3) label = "Canceled";
-        // To do full delay patching, we'd need stop-specific info. 
-        // For the 10ms CPU limit, maybe trip-level is a good start.
-      }
-
-      // Convert timeMins (relative to midnight UTC-ish) back to absolute for cutoff check
-      // This is tricky without the date. Let's assume the baseline only contains 
-      // arrivals near 'now'.
-      
-      // OPTIMIZATION: baseline.bin arrivals are already sorted by time.
-      // We can improve this further, but let's get the basic binary flow working.
+      if (live && live.tripRelationship === 3) label = "Canceled";
 
       arrivals.push({
         route: dict[routeIdx],
         dir: String.fromCharCode(dirCode),
-        timeMins: effectiveMins,
+        timeMins: monoMins % 1440, // standard display time (minutes since midnight)
         label
       });
     }

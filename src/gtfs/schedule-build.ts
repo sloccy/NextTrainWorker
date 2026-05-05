@@ -8,13 +8,13 @@ import {
 } from "./service-days.js";
 import { inferDirections } from "./direction.js";
 import {
-  w8, w16be, w32be, wLpStr, hexToRgb, hashTripId, Dictionary,
+  w8, w16be, w32be, wLpStr, hashTripId, Dictionary,
   type StationWire, buildStationsBin
 } from "../binary.js";
 
 const GTFS_ZIP_URL = "https://www.rtd-denver.com/files/gtfs/google_transit.zip";
 const RAIL_TYPES = new Set([0, 2]); // 0=light rail, 2=commuter rail
-const WINDOW_DAYS = 7;
+const WINDOW_DAYS = 1; // 24-hour window
 
 export interface BuiltSchedules {
   generatedAt: number;
@@ -98,6 +98,11 @@ export async function buildSchedule(): Promise<BuiltSchedules> {
   const now = Date.now();
   const windowEnd = now + WINDOW_DAYS * 86_400_000;
 
+  // Find the base midnight for the entire schedule build (start of "today" in Denver)
+  const baseDate = new Date(now);
+  const baseYmd = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Denver" }).format(baseDate).replace(/-/g, "");
+  const baseMidnightUTC = mountainMidnightUTC(baseYmd);
+
   const activeSvcByDay: Array<{ yyyymmdd: string; midnightUTC: number; svcIds: Set<string> }> = [];
   for (let dayOffset = 0; dayOffset < WINDOW_DAYS + 1; dayOffset++) {
     const dayDate = new Date(now + dayOffset * 86_400_000);
@@ -110,7 +115,7 @@ export async function buildSchedule(): Promise<BuiltSchedules> {
   }
 
   // Pre-filter trip_ids and group by station
-  const stationArrivals = new Map<string, Array<{ route: string, dir: string, timeMins: number, tripId: string, e: number }>>();
+  const stationArrivals = new Map<string, Array<{ route: string, dir: string, monoMins: number, tripId: string, e: number }>>();
   const stopToSlug = new Map<string, string>();
   
   // Build stop -> station slug map
@@ -138,11 +143,10 @@ export async function buildSchedule(): Promise<BuiltSchedules> {
         let list = stationArrivals.get(slug);
         if (!list) { list = []; stationArrivals.set(slug, list); }
         
-        const date = new Date(scheduledUnix * 1000);
         list.push({
           route: routeShortName.get(trip.route_id)!,
           dir,
-          timeMins: date.getHours() * 60 + date.getMinutes(),
+          monoMins: Math.floor((scheduledUnix - baseMidnightUTC) / 60),
           tripId,
           e: scheduledUnix
         });
@@ -161,7 +165,7 @@ export async function buildSchedule(): Promise<BuiltSchedules> {
     for (const a of arrivals) {
       w8(block, dict.get(a.route));
       w8(block, a.dir.charCodeAt(0));
-      w16be(block, a.timeMins);
+      w16be(block, a.monoMins);
       w32be(block, hashTripId(a.tripId));
     }
     dataBlocks.push(block);
@@ -170,6 +174,7 @@ export async function buildSchedule(): Promise<BuiltSchedules> {
   const baselineResult: number[] = [];
   const generatedAt = Math.floor(now / 1000);
   w32be(baselineResult, generatedAt);
+  w32be(baselineResult, baseMidnightUTC);
   dict.write(baselineResult);
   w16be(baselineResult, slugs.length);
 

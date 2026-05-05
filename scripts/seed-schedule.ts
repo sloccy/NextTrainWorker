@@ -14,21 +14,21 @@ async function main() {
     console.log('[seed] Uploading baseline:bin...');
     writeFileSync(TMP_PATH, baselineBin);
     execSync(
-      `npx wrangler kv key put "baseline:bin" --path "${TMP_PATH}" --namespace-id "${NAMESPACE_ID}"`,
+      `npx wrangler kv key put "baseline:bin" --path "${TMP_PATH}" --namespace-id "${NAMESPACE_ID}" --remote`,
       { stdio: 'inherit' },
     );
 
     console.log('[seed] Uploading stations:bin...');
     writeFileSync(TMP_PATH, stationsBin);
     execSync(
-      `npx wrangler kv key put "stations:bin" --path "${TMP_PATH}" --namespace-id "${NAMESPACE_ID}"`,
+      `npx wrangler kv key put "stations:bin" --path "${TMP_PATH}" --namespace-id "${NAMESPACE_ID}" --remote`,
       { stdio: 'inherit' },
     );
 
     const version = String(generatedAt);
     console.log(`[seed] Uploading schedule:version = ${version}...`);
     execSync(
-      `npx wrangler kv key put "schedule:version" "${version}" --namespace-id "${NAMESPACE_ID}"`,
+      `npx wrangler kv key put "schedule:version" "${version}" --namespace-id "${NAMESPACE_ID}" --remote`,
       { stdio: 'inherit' },
     );
   } finally {
