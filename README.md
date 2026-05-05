@@ -23,7 +23,7 @@ GET /arrivals?station=<station_slug>&routes=<route1>:<dir>,<route2>:<dir>,...
 - `routes` — comma-separated `route:direction` pairs. Direction is `N`, `S`, `E`, or `W`.
 
 ```bash
-curl 'https://nexttrainworker.sloccy.workers.dev/arrivals?station=union_station&routes=A:E,B:N,G:N'
+curl 'https://nt.sloccy.workers.dev/arrivals?station=union_station&routes=A:E,B:N,G:N'
 ```
 
 Response fields are render-ready for the watch: `t` (display time in America/Denver), `s` (status), `l` (human label).
@@ -33,7 +33,7 @@ Response fields are render-ready for the watch: `t` (display time in America/Den
 Discovery endpoint — returns all stations with available route/direction combos.
 
 ```bash
-curl 'https://nexttrainworker.sloccy.workers.dev/stations'
+curl 'https://nt.sloccy.workers.dev/stations'
 ```
 
 Cached for 1 hour. Only changes when the weekly schedule runs.
@@ -88,8 +88,8 @@ After it completes (~1 min), the Worker's per-minute cron will start populating 
 ### 6. Verify
 
 ```bash
-curl 'https://nexttrainworker.sloccy.workers.dev/stations'
-curl 'https://nexttrainworker.sloccy.workers.dev/arrivals?station=union_station&routes=A:E'
+curl 'https://nt.sloccy.workers.dev/stations'
+curl 'https://nt.sloccy.workers.dev/arrivals?station=union_station&routes=A:E'
 ```
 
 ## Schedule rebuilds
