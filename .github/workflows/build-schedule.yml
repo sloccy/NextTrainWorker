@@ -2,8 +2,11 @@ name: Build GTFS Schedule
 
 on:
   schedule:
-    - cron: '0 4 * * 0'  # Sunday 4am UTC, matches RTD's weekly update cadence
+    - cron: '0 4,16 * * *'  # 4am + 4pm UTC daily; baseline window is 24h (12h overlap)
   workflow_dispatch:       # manual trigger for initial seed and ad-hoc rebuilds
+
+permissions:
+  contents: write
 
 jobs:
   build-schedule:
@@ -18,7 +21,26 @@ jobs:
 
       - run: npm ci
 
-      - name: Build and upload schedule to KV
+      - name: Build schedule + upload stations.bin to R2
         run: npx tsx scripts/seed-schedule.ts
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Deploy worker with bundled baseline
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Commit regenerated baseline
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet src/baseline.generated.ts; then
+            echo "No baseline changes to commit."
+          else
+            git add src/baseline.generated.ts
+            git commit -m "chore: regenerate baseline.generated.ts"
+            git push
+          fi
