@@ -1,12 +1,11 @@
 import type { TripPrediction } from "./tripupdate.js";
-import { w32be, w16be, w8 } from "../binary.js";
 
 const CUTOFF_SECONDS = 5 * 60;
 const HORIZON_SECONDS = 3 * 60 * 60; // 3 hours
 
 /**
  * Build arrivals/current.bin by patching the binary baseline with live overrides.
- * Zero-allocation byte copier: copies from baseline and patches live delays directly into output.
+ * Highly optimized for < 10ms CPU time using TypedArrays and direct memory copying.
  */
 export function applyLive(
   baselineBin: Uint8Array,
@@ -15,62 +14,64 @@ export function applyLive(
 ): Uint8Array {
   const now = nowOverride ?? Math.floor(Date.now() / 1000);
 
-  // Read header
-  const baseMidnightUTC = ((baselineBin[4] << 24) | (baselineBin[5] << 16) | (baselineBin[6] << 8) | baselineBin[7]) >>> 0;
+  // Read header from baseline
+  // Header: [u32 genAt][u32 baseMidnightUTC]
+  const viewB = new DataView(baselineBin.buffer, baselineBin.byteOffset, baselineBin.byteLength);
+  const baseMidnightUTC = viewB.getUint32(4);
   let bpos = 8;
 
   const currentMonoMins = Math.floor((now - baseMidnightUTC) / 60);
   const cutoffMonoMins = currentMonoMins - (CUTOFF_SECONDS / 60);
   const horizonMonoMins = currentMonoMins + (HORIZON_SECONDS / 60);
 
-  const out: number[] = [];
-  w32be(out, now); // generated_at
+  // Pre-allocate output buffer (64KB)
+  const out = new Uint8Array(65536);
+  const viewO = new DataView(out.buffer);
+  let opos = 0;
+
+  viewO.setUint32(opos, now); opos += 4; // generated_at
 
   // 1. Copy dictionary block from baseline to out
-  const dictCount = (baselineBin[bpos++] << 8) | baselineBin[bpos++];
-  w16be(out, dictCount);
+  const dictCount = viewB.getUint16(bpos); bpos += 2;
+  viewO.setUint16(opos, dictCount); opos += 2;
+
   for (let i = 0; i < dictCount; i++) {
     const len = baselineBin[bpos++];
-    out.push(len);
-    for (let j = 0; j < len; j++) out.push(baselineBin[bpos++]);
+    out[opos++] = len;
+    out.set(baselineBin.subarray(bpos, bpos + len), opos);
+    opos += len;
+    bpos += len;
   }
 
   // 2. Read station index and prepare output data offset math
-  const numStations = (baselineBin[bpos++] << 8) | baselineBin[bpos++];
-  const stationIndexStart = bpos;
-  w16be(out, numStations);
+  const numStations = viewB.getUint16(bpos); bpos += 2;
+  viewO.setUint16(opos, numStations); opos += 2;
 
-  // We need to write the index twice: once for sizes, once with real offsets.
-  // Actually, let's just push placeholders for offsets and fill them later.
-  const indexEntries: Array<{ slug: number[], dataPos: number }> = [];
+  // Track the offsets we need to patch later
+  const patchOffsets: Array<{ opos: number, bDataOffset: number }> = [];
+
   for (let i = 0; i < numStations; i++) {
     const slen = baselineBin[bpos++];
-    const slug: number[] = [slen];
-    for (let j = 0; j < slen; j++) slug.push(baselineBin[bpos++]);
-    const bDataOffset = ((baselineBin[bpos++] << 24) | (baselineBin[bpos++] << 16) | (baselineBin[bpos++] << 8) | baselineBin[bpos++]) >>> 0;
+    out[opos++] = slen;
+    out.set(baselineBin.subarray(bpos, bpos + slen), opos);
+    opos += slen;
+    bpos += slen;
     
-    const entryStart = out.length;
-    out.push(...slug);
-    w32be(out, 0); // Placeholder for dataOffset
-    indexEntries.push({ slug, dataPos: entryStart + slug.length });
-    
-    // Remember the baseline's data offset for the next step
-    (indexEntries[indexEntries.length - 1] as any).bOffset = bDataOffset;
+    const bDataOffset = viewB.getUint32(bpos); bpos += 4;
+    patchOffsets.push({ opos: opos, bDataOffset });
+    opos += 4; // Skip the offset field for now, will patch in Step 3
   }
 
   // 3. Process each station's data and write to output
   for (let i = 0; i < numStations; i++) {
-    const entry = indexEntries[i] as any;
-    const dataStartOffset = out.length;
+    const patch = patchOffsets[i];
+    const dataStartOffset = opos;
     
-    // Fill the offset in the index
-    out[entry.dataPos]     = (dataStartOffset >>> 24) & 0xFF;
-    out[entry.dataPos + 1] = (dataStartOffset >>> 16) & 0xFF;
-    out[entry.dataPos + 2] = (dataStartOffset >>> 8) & 0xFF;
-    out[entry.dataPos + 3] = dataStartOffset & 0xFF;
+    // Patch the index offset
+    viewO.setUint32(patch.opos, dataStartOffset);
 
-    const bDataPos = entry.bOffset;
-    const totalCount = (baselineBin[bDataPos] << 8) | baselineBin[bDataPos + 1];
+    const bDataPos = patch.bDataOffset;
+    const totalCount = viewB.getUint16(bDataPos);
     const dataStart = bDataPos + 2;
 
     // Binary search for window start
@@ -80,40 +81,37 @@ export function applyLive(
     while (low <= high) {
       const mid = (low + high) >>> 1;
       const mPos = dataStart + (mid * 8);
-      const mMins = (baselineBin[mPos + 2] << 8) | baselineBin[mPos + 3];
+      const mMins = viewB.getUint16(mPos + 2);
       if (mMins >= cutoffMonoMins) { startIndex = mid; high = mid - 1; }
       else { low = mid + 1; }
     }
 
-    const stationBuffer: number[] = [];
+    const countPos = opos;
+    opos += 2; // Skip count field, will fill after loop
     let outCount = 0;
+
     for (let j = startIndex; j < totalCount; j++) {
       const ePos = dataStart + (j * 8);
-      const monoMins = (baselineBin[ePos + 2] << 8) | baselineBin[ePos + 3];
+      const monoMins = viewB.getUint16(ePos + 2);
       if (monoMins > horizonMonoMins) break;
 
       const routeIdx = baselineBin[ePos];
       const dirCode = baselineBin[ePos + 1];
-      const tripIdHash = ((baselineBin[ePos + 4] << 24) | (baselineBin[ePos + 5] << 16) | (baselineBin[ePos + 6] << 8) | baselineBin[ePos + 7]) >>> 0;
+      const tripIdHash = viewB.getUint32(ePos + 4);
 
       const live = liveByTripIdHash.get(tripIdHash);
       let delayStatus = 0; // Scheduled
-      if (live) {
-        if (live.tripRelationship === 3) delayStatus = -128; // Canceled
-        // Note: For full delay math, we'd need stop-id matching.
-        // We'll stick to trip-level relationship for this pass.
-      }
+      if (live && live.tripRelationship === 3) delayStatus = -128; // Canceled
 
-      w8(stationBuffer, routeIdx);
-      w8(stationBuffer, dirCode);
-      w16be(stationBuffer, monoMins % 1440);
-      w8(stationBuffer, delayStatus);
+      out[opos++] = routeIdx;
+      out[opos++] = dirCode;
+      viewO.setUint16(opos, monoMins % 1440); opos += 2;
+      out[opos++] = delayStatus;
       outCount++;
     }
 
-    w16be(out, outCount);
-    out.push(...stationBuffer);
+    viewO.setUint16(countPos, outCount);
   }
 
-  return new Uint8Array(out);
+  return out.slice(0, opos);
 }
