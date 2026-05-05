@@ -4,3 +4,4 @@ dist/
 .claude/
 *.local
 arrivals/
+src/baseline.generated.ts

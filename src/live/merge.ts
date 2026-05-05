@@ -100,7 +100,16 @@ export function applyLive(
       const tripIdHash = viewB.getUint32(ePos + 4);
 
       const liveRel = liveByTripIdHash.get(tripIdHash);
-      const delayStatus = liveRel === 3 ? -128 : 0; // Canceled : Scheduled
+      let delayStatus = 0;
+      if (liveRel === 3) {
+        delayStatus = -128; // Canceled
+      } else if (liveRel === 4) {
+        delayStatus = -127; // Skipped
+      } else if (liveRel !== undefined) {
+        delayStatus = -126; // In live feed (On time / Live)
+      } else {
+        delayStatus = 0;    // Not in live feed (Scheduled)
+      }
 
       out[opos++] = routeIdx;
       out[opos++] = dirCode;
