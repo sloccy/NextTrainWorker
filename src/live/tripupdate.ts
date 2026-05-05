@@ -2,33 +2,33 @@ import { decodeFeedMessage } from "./proto-decode.js";
 
 const TRIPUPDATE_URL = "https://open-data.rtd-denver.com/files/gtfs-rt/rtd/TripUpdate.pb";
 
-export interface TripPrediction {
-  tripId: string;
-  routeId: string;
-  /** SCHEDULED=0, ADDED=1, UNSCHEDULED=2, CANCELED=3 */
-  tripRelationship: number;
-  stops: Map<string, StopPrediction>;
-}
+/** Map<tripIdHash, tripRelationship> where 3 = CANCELED. */
+export type LiveByTripIdHash = Map<number, number>;
 
-export interface StopPrediction {
-  /** Unix seconds, or null if no time in feed */
-  time: number | null;
-  /** SCHEDULED=0, SKIPPED=1, NO_DATA=2 */
-  stopRelationship: number;
-}
+// Module-level cache for conditional GET. Survives across warm invocations.
+let cachedEtag: string | null = null;
+let cachedLastModified: string | null = null;
+let cachedLive: LiveByTripIdHash = new Map();
 
-export async function fetchTripUpdates(): Promise<Map<number, TripPrediction>> {
-  const resp = await fetch(TRIPUPDATE_URL, {
-    headers: { "Accept-Encoding": "gzip" },
-  });
+export async function fetchTripUpdates(): Promise<LiveByTripIdHash> {
+  const headers: Record<string, string> = { "Accept-Encoding": "gzip" };
+  if (cachedEtag) headers["If-None-Match"] = cachedEtag;
+  if (cachedLastModified) headers["If-Modified-Since"] = cachedLastModified;
+
+  const resp = await fetch(TRIPUPDATE_URL, { headers });
+
+  if (resp.status === 304) return cachedLive;
 
   if (!resp.ok) {
     throw new Error(`TripUpdate fetch failed: ${resp.status} ${resp.statusText}`);
   }
 
   const buffer = await resp.arrayBuffer();
-  const byTripIdHash = decodeFeedMessage(new Uint8Array(buffer));
+  const live = decodeFeedMessage(new Uint8Array(buffer));
 
-  console.log(`[tripupdate] parsed ${byTripIdHash.size} trip updates`);
-  return byTripIdHash;
+  cachedEtag = resp.headers.get("etag");
+  cachedLastModified = resp.headers.get("last-modified");
+  cachedLive = live;
+
+  return live;
 }

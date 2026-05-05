@@ -1,12 +1,13 @@
 /**
  * Minimal GTFS-RT FeedMessage decoder.
  *
- * Reads only the fields used by this worker:
+ * Only reads the fields the merge actually uses:
  *   entity[].trip_update.trip.{trip_id, schedule_relationship}
- *   entity[].trip_update.stop_time_update[].{stop_id, arrival.time, departure.time, schedule_relationship}
+ *
+ * Per-stop arrival/departure times are intentionally skipped — merge.ts only
+ * inspects tripRelationship to mark canceled trips.
  */
 
-import type { TripPrediction, StopPrediction } from "./tripupdate.js";
 import { hashTripId } from "../binary.js";
 
 const td = new TextDecoder();
@@ -56,8 +57,9 @@ class Reader {
   }
 }
 
-export function decodeFeedMessage(buf: Uint8Array): Map<number, TripPrediction> {
-  const out = new Map<number, TripPrediction>();
+/** Returns Map<tripIdHash, tripRelationship>. */
+export function decodeFeedMessage(buf: Uint8Array): Map<number, number> {
+  const out = new Map<number, number>();
   const r = new Reader(buf);
   while (r.pos < buf.length) {
     const [f, w] = r.tag();
@@ -67,7 +69,7 @@ export function decodeFeedMessage(buf: Uint8Array): Map<number, TripPrediction> 
   return out;
 }
 
-function parseEntity(buf: Uint8Array, out: Map<number, TripPrediction>): void {
+function parseEntity(buf: Uint8Array, out: Map<number, number>): void {
   const r = new Reader(buf);
   while (r.pos < buf.length) {
     const [f, w] = r.tag();
@@ -76,11 +78,10 @@ function parseEntity(buf: Uint8Array, out: Map<number, TripPrediction>): void {
   }
 }
 
-function parseTripUpdate(buf: Uint8Array, out: Map<number, TripPrediction>): void {
+function parseTripUpdate(buf: Uint8Array, out: Map<number, number>): void {
   const r = new Reader(buf);
   let tripIdHash = 0;
   let tripRelationship = 0;
-  const stops = new Map<string, StopPrediction>();
 
   while (r.pos < buf.length) {
     const [f, w] = r.tag();
@@ -88,15 +89,12 @@ function parseTripUpdate(buf: Uint8Array, out: Map<number, TripPrediction>): voi
       const [hash, rel] = parseTripDescriptor(r.bytes());
       tripIdHash = hash;
       tripRelationship = rel;
-    } else if (f === 2 && w === 2) {
-      const [stopId, time, rel] = parseStopTimeUpdate(r.bytes());
-      if (stopId) stops.set(stopId, { time, stopRelationship: rel });
     } else {
       r.skip(w);
     }
   }
 
-  if (tripIdHash) out.set(tripIdHash, { tripId: "", routeId: "", tripRelationship, stops });
+  if (tripIdHash) out.set(tripIdHash, tripRelationship);
 }
 
 function parseTripDescriptor(buf: Uint8Array): [tripIdHash: number, schedRel: number] {
@@ -110,39 +108,4 @@ function parseTripDescriptor(buf: Uint8Array): [tripIdHash: number, schedRel: nu
     else r.skip(w);
   }
   return [tripIdHash, schedRel];
-}
-
-function parseStopTimeUpdate(buf: Uint8Array): [stopId: string, time: number | null, schedRel: number] {
-  const r = new Reader(buf);
-  let stopId = "";
-  let arrivalTime: number | null = null;
-  let departureTime: number | null = null;
-  let schedRel = 0;
-
-  while (r.pos < buf.length) {
-    const [f, w] = r.tag();
-    if (f === 4 && w === 2) {
-      stopId = r.str();
-    } else if (f === 2 && w === 2) {
-      arrivalTime = parseTimeField(r.bytes());
-    } else if (f === 3 && w === 2) {
-      departureTime = parseTimeField(r.bytes());
-    } else if (f === 5 && w === 0) {
-      schedRel = r.varint();
-    } else {
-      r.skip(w);
-    }
-  }
-
-  return [stopId, arrivalTime ?? departureTime, schedRel];
-}
-
-function parseTimeField(buf: Uint8Array): number | null {
-  const r = new Reader(buf);
-  while (r.pos < buf.length) {
-    const [f, w] = r.tag();
-    if (f === 2 && w === 0) return r.varint();
-    r.skip(w);
-  }
-  return null;
 }

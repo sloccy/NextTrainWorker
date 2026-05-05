@@ -18,8 +18,3 @@ export async function getStationsBin(env: Env): Promise<Uint8Array | null> {
   return new Uint8Array(await obj.arrayBuffer());
 }
 
-export async function writeStationsBin(env: Env, buf: Uint8Array): Promise<void> {
-  await env.ARRIVALS_R2.put("arrivals/stations.bin", buf, {
-    httpMetadata: { contentType: "application/octet-stream" },
-  });
-}

@@ -15,7 +15,7 @@ export default {
     return new Response("Not found", { status: 404 });
   },
 
-  async scheduled(event: ScheduledEvent, env: Env): Promise<void> {
-    if (event.cron === "* * * * *") await handleRefreshLive(env);
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    if (event.cron === "* * * * *") await handleRefreshLive(env, ctx);
   },
 };

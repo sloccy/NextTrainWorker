@@ -1,4 +1,4 @@
-import type { TripPrediction } from "./tripupdate.js";
+import type { LiveByTripIdHash } from "./tripupdate.js";
 
 const CUTOFF_SECONDS = 5 * 60;
 const HORIZON_SECONDS = 3 * 60 * 60; // 3 hours
@@ -9,7 +9,7 @@ const HORIZON_SECONDS = 3 * 60 * 60; // 3 hours
  */
 export function applyLive(
   baselineBin: Uint8Array,
-  liveByTripIdHash: Map<number, TripPrediction>,
+  liveByTripIdHash: LiveByTripIdHash,
   nowOverride?: number,
 ): Uint8Array {
   const now = nowOverride ?? Math.floor(Date.now() / 1000);
@@ -99,9 +99,8 @@ export function applyLive(
       const dirCode = baselineBin[ePos + 1];
       const tripIdHash = viewB.getUint32(ePos + 4);
 
-      const live = liveByTripIdHash.get(tripIdHash);
-      let delayStatus = 0; // Scheduled
-      if (live && live.tripRelationship === 3) delayStatus = -128; // Canceled
+      const liveRel = liveByTripIdHash.get(tripIdHash);
+      const delayStatus = liveRel === 3 ? -128 : 0; // Canceled : Scheduled
 
       out[opos++] = routeIdx;
       out[opos++] = dirCode;
@@ -113,5 +112,5 @@ export function applyLive(
     viewO.setUint16(countPos, outCount);
   }
 
-  return out.slice(0, opos);
+  return out.subarray(0, opos);
 }
