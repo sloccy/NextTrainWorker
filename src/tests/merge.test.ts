@@ -1,9 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { buildBaseline, applyLive } from "../live/merge.js";
-import type { ScheduleBlob, ArrivalsBlob } from "../types.js";
+import type { ScheduleBlob } from "../types.js";
 import type { TripPrediction } from "../live/tripupdate.js";
-
-function parse(json: string): ArrivalsBlob { return JSON.parse(json) as ArrivalsBlob; }
+import { scanArrivalsBin } from "../binary.js";
 
 const NOW = Math.floor(Date.now() / 1000);
 
@@ -25,6 +24,36 @@ function makeSchedule(): ScheduleBlob {
       },
     },
   };
+}
+
+interface DecodedArrival {
+  r: number; g: number; b: number;
+  route: string; headsign: string; time: string; label: string;
+}
+
+function decodeWatchBin(buf: Uint8Array): DecodedArrival[] {
+  const count = buf[0];
+  const out: DecodedArrival[] = [];
+  let pos = 1;
+  for (let i = 0; i < count; i++) {
+    const r = buf[pos++];
+    const g = buf[pos++];
+    const b = buf[pos++];
+    const readStr = () => {
+      const len = buf[pos++];
+      let s = "";
+      for (let j = 0; j < len; j++) s += String.fromCharCode(buf[pos++]);
+      return s;
+    };
+    out.push({
+      r, g, b,
+      route: readStr(),
+      headsign: readStr(),
+      time: readStr(),
+      label: readStr(),
+    });
+  }
+  return out;
 }
 
 describe("buildBaseline", () => {
@@ -51,6 +80,9 @@ describe("buildBaseline", () => {
 });
 
 describe("applyLive", () => {
+  const station = "union_station";
+  const routes = [{ route: "A", dir: "E" }];
+
   it("marks trips with live predictions as 'live'", () => {
     const live = new Map<string, TripPrediction>([
       ["trip-1", {
@@ -58,21 +90,21 @@ describe("applyLive", () => {
         stops: new Map([["34667", { time: NOW + 660, stopRelationship: 0 }]]),
       }],
     ]);
-    const blob = parse(applyLive(buildBaseline(makeSchedule(), NOW), live, NOW));
-    const first = blob.data["A:34667:E"].a[0];
-    expect(first.e).toBe(NOW + 660);
-    expect(first.l).toBe("On time");
+    const bin = applyLive(buildBaseline(makeSchedule(), NOW), live, NOW);
+    const res = scanArrivalsBin(bin, station, routes)!;
+    const first = decodeWatchBin(res.buf)[0];
+    expect(first.label).toBe("On time");
   });
 
   it("marks trips without predictions as 'scheduled'", () => {
-    const blob = parse(applyLive(buildBaseline(makeSchedule(), NOW), new Map(), NOW));
-    expect(blob.data["A:34667:E"].a.every(a => a.l === undefined)).toBe(true);
+    const bin = applyLive(buildBaseline(makeSchedule(), NOW), new Map(), NOW);
+    const res = scanArrivalsBin(bin, station, routes)!;
+    const decoded = decodeWatchBin(res.buf);
+    expect(decoded.every(a => a.label === "")).toBe(true);
   });
 
   it("advances startIdx past stale entries across ticks", () => {
     const baseline = buildBaseline(makeSchedule(), NOW);
-    // CUTOFF is 5 min. trip-1 eff = NOW+600 (+10 min). Past cutoff when now > eff+CUTOFF = NOW+900.
-    // Simulate a tick 16 minutes later (NOW+960 > NOW+900).
     const later = NOW + 16 * 60;
     applyLive(baseline, new Map(), later);
     expect(baseline.data["A:34667:E"].startIdx).toBe(1);
@@ -85,9 +117,10 @@ describe("applyLive", () => {
         stops: new Map(),
       }],
     ]);
-    const blob = parse(applyLive(buildBaseline(makeSchedule(), NOW), live, NOW));
-    const canceled = blob.data["A:34667:E"].a.find(a => a.e === NOW + 1500);
-    expect(canceled?.l).toBe("Canceled");
+    const bin = applyLive(buildBaseline(makeSchedule(), NOW), live, NOW);
+    const res = scanArrivalsBin(bin, station, routes)!;
+    const canceled = decodeWatchBin(res.buf).find(a => a.label === "Canceled");
+    expect(canceled).toBeDefined();
   });
 
   it("marks skipped stops correctly", () => {
@@ -97,9 +130,10 @@ describe("applyLive", () => {
         stops: new Map([["34667", { time: null, stopRelationship: 1 }]]),
       }],
     ]);
-    const blob = parse(applyLive(buildBaseline(makeSchedule(), NOW), live, NOW));
-    const skipped = blob.data["A:34667:E"].a.find(a => a.e === NOW + 2400);
-    expect(skipped?.l).toBe("Skipped");
+    const bin = applyLive(buildBaseline(makeSchedule(), NOW), live, NOW);
+    const res = scanArrivalsBin(bin, station, routes)!;
+    const skipped = decodeWatchBin(res.buf).find(a => a.label === "Skipped");
+    expect(skipped).toBeDefined();
   });
 
   it("produces correct delay labels", () => {
@@ -109,8 +143,9 @@ describe("applyLive", () => {
         stops: new Map([["34667", { time: NOW + 600 + 5 * 60, stopRelationship: 0 }]]),
       }],
     ]);
-    const blob = parse(applyLive(buildBaseline(makeSchedule(), NOW), live, NOW));
-    const first = blob.data["A:34667:E"].a[0];
-    expect(first.l).toBe("Delayed 5 min");
+    const bin = applyLive(buildBaseline(makeSchedule(), NOW), live, NOW);
+    const res = scanArrivalsBin(bin, station, routes)!;
+    const first = decodeWatchBin(res.buf)[0];
+    expect(first.label).toBe("Delayed 5 min");
   });
 });

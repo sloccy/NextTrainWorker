@@ -1,6 +1,6 @@
 import type { Env } from "../types.js";
 import { getSchedule, getScheduleVersion } from "../kv.js";
-import { writeArrivals } from "../r2.js";
+import { writeArrivalsBin, writeStationsBin } from "../r2.js";
 import { fetchTripUpdates } from "../live/tripupdate.js";
 import { buildBaseline, applyLive, type Baseline } from "../live/merge.js";
 import { buildSampleSchedule } from "../live/sample-schedule.js";
@@ -12,22 +12,20 @@ interface CachedBaseline {
 
 let s_cached: CachedBaseline | null = null;
 
-async function getCached(env: Env): Promise<Baseline> {
+export async function handleRefreshLive(env: Env): Promise<void> {
   const remoteVersion = (await getScheduleVersion(env)) ?? "";
+  let baselineJustRebuilt = false;
+  let baseline: Baseline;
 
   if (s_cached && s_cached.version === remoteVersion) {
-    return s_cached.baseline;
+    baseline = s_cached.baseline;
+  } else {
+    const schedule = (await getSchedule(env)) ?? buildSampleSchedule();
+    baseline = buildBaseline(schedule);
+    s_cached = { version: remoteVersion, baseline };
+    baselineJustRebuilt = true;
+    console.log(`[refresh-live] baseline rebuilt for version=${remoteVersion}`);
   }
-
-  const schedule = (await getSchedule(env)) ?? buildSampleSchedule();
-  const baseline = buildBaseline(schedule);
-  s_cached = { version: remoteVersion, baseline };
-  console.log(`[refresh-live] baseline rebuilt for version=${remoteVersion}`);
-  return baseline;
-}
-
-export async function handleRefreshLive(env: Env): Promise<void> {
-  const baseline = await getCached(env);
 
   let liveByTripId;
   try {
@@ -37,8 +35,12 @@ export async function handleRefreshLive(env: Env): Promise<void> {
     liveByTripId = new Map();
   }
 
-  const json = applyLive(baseline, liveByTripId);
-  await writeArrivals(env, json);
+  const bin = applyLive(baseline, liveByTripId);
+  await writeArrivalsBin(env, bin);
+
+  if (baselineJustRebuilt) {
+    await writeStationsBin(env, baseline.stationsBin);
+  }
 
   console.log("[refresh-live] done");
 }

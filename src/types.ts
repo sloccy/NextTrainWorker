@@ -1,36 +1,12 @@
 export type Direction = "N" | "S" | "E" | "W";
 
-// Shape of each arrival in the HTTP /arrivals response
-// l is absent for scheduled (default); present for live/canceled/skipped/added
-export interface ArrivalEntry {
-  r: string;   // route short name
-  t: string;   // display time ("3:44 PM")
-  l?: string;  // absent="Scheduled", "On time"/"Delayed N min"=live, "Canceled", "Skipped", "Added"
-}
-
 export interface StationInfo {
   stop_ids: string[];
 }
 
-export interface RouteWire {
-  c: string | null;           // route color hex
-  h: Record<string, string>;  // direction → headsign
-}
-
-export interface ArrivalsBlob {
-  generated_at: number;
-  stations: Record<string, StationInfo>;
-  routes: Record<string, RouteWire>;
-  data: Record<string, ArrivalsKeyEntry>;
-}
-
-export interface ArrivalsKeyEntry {
-  a: StoredArrivalEntry[];
-}
-
-// Per-arrival shape stored in R2 blob.
+// Per-arrival shape stored in memory within BaselineKeyEntry.
 // r is omitted (derivable from the data key prefix).
-// e is absolute unix time — filter/sort only, not in HTTP response.
+// e is absolute unix time — filter/sort only.
 export interface StoredArrivalEntry {
   e: number;
   t: string;

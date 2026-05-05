@@ -1,9 +1,16 @@
-import type { ScheduleBlob, RouteWire, StationInfo, StoredArrivalEntry } from "../types.js";
+import type { ScheduleBlob, StationInfo, StoredArrivalEntry } from "../types.js";
 import type { TripPrediction } from "./tripupdate.js";
+import {
+  type BinArrival,
+  type StationWire,
+  hexToRgb,
+  buildArrivalsBin,
+  buildStationsBin,
+} from "../binary.js";
 
 const DENVER_TZ = "America/Denver";
-const MAX_PER_KEY = 6;
 const CUTOFF_SECONDS = 5 * 60;
+const HORIZON_SECONDS = 3 * 60 * 60; // 3 hours
 
 export const fmt = new Intl.DateTimeFormat("en-US", {
   timeZone: DENVER_TZ,
@@ -14,9 +21,12 @@ export const fmt = new Intl.DateTimeFormat("en-US", {
 
 /** Internal baseline shape — never serialized directly. */
 export interface BaselineKeyEntry {
+  route_id: string;
+  route_short: string;
   route_color: string | null;
+  dir: string;
   headsign: string;
-  /** Sorted by e ascending — full set, NOT pre-sliced to MAX_PER_KEY */
+  /** Sorted by e ascending — full set */
   arrivals: StoredArrivalEntry[];
   /** Parallel to arrivals, holds trip_id per entry (off-wire) */
   tripIds: string[];
@@ -35,12 +45,10 @@ export interface Baseline {
   stations: Record<string, StationInfo>;
   data: Record<string, BaselineKeyEntry>;
   byTrip: Map<string, BaselineSlot[]>;
-  serializedStations: string;
-  serializedRoutes: string;
-  serializedKeyNames: Map<string, string>;
-  serializedValues: Map<string, { str: string; atIdx: number }>;
   allowedTripIds: Set<string>;
   stopIdByKey: Map<string, string>;
+  slugByStopId: Map<string, string>;
+  stationsBin: Uint8Array;
 }
 
 export function buildBaseline(schedule: ScheduleBlob, nowOverride?: number): Baseline {
@@ -50,7 +58,7 @@ export function buildBaseline(schedule: ScheduleBlob, nowOverride?: number): Bas
   const byTrip = new Map<string, BaselineSlot[]>();
 
   for (const [key, keyEntry] of Object.entries(schedule.by_key)) {
-    const [routeId] = key.split(":");
+    const [routeId, , dir] = key.split(":");
     const routeInfo = schedule.routes[routeId];
     const arrivals: StoredArrivalEntry[] = [];
     const tripIds: string[] = [];
@@ -71,7 +79,10 @@ export function buildBaseline(schedule: ScheduleBlob, nowOverride?: number): Bas
     const sortedTrips = order.map(i => tripIds[i]);
 
     data[key] = {
+      route_id: routeId,
+      route_short: routeInfo?.short_name ?? routeId,
       route_color: routeInfo?.color ?? null,
+      dir,
       headsign: keyEntry.entries[0]?.headsign ?? "",
       arrivals: sortedArr,
       tripIds: sortedTrips,
@@ -86,61 +97,73 @@ export function buildBaseline(schedule: ScheduleBlob, nowOverride?: number): Bas
     }
   }
 
-  // Build top-level routes wire object: color + headsign per direction
-  const routeWires: Record<string, RouteWire> = {};
+  const stopIdByKey = new Map<string, string>();
+  const slugByStopId = new Map<string, string>();
   for (const key in data) {
-    const [routeId, , dir] = key.split(":");
-    if (!routeWires[routeId]) routeWires[routeId] = { c: data[key].route_color, h: {} };
-    if (!routeWires[routeId].h[dir]) routeWires[routeId].h[dir] = data[key].headsign;
+    const stopId = key.split(":")[1];
+    stopIdByKey.set(key, stopId);
   }
 
-  const serializedStations = JSON.stringify(schedule.stations ?? {});
-  const serializedRoutes = JSON.stringify(routeWires);
-  const serializedKeyNames = new Map<string, string>();
-  const stopIdByKey = new Map<string, string>();
-  for (const key in data) {
-    serializedKeyNames.set(key, JSON.stringify(key));
-    stopIdByKey.set(key, key.split(":")[1]);
+  const stationEntries: StationWire[] = [];
+  for (const [slug, info] of Object.entries(schedule.stations ?? {})) {
+    const routesByDir = new Map<string, { r: string, c: string | null, d: string, h: string }>();
+    for (const stopId of info.stop_ids) {
+      slugByStopId.set(stopId, slug);
+      // Find all keys for this stop to build routes list
+      for (const key in data) {
+        if (key.split(":")[1] === stopId) {
+          const entry = data[key];
+          const rkey = `${entry.route_short}:${entry.dir}`;
+          if (!routesByDir.has(rkey)) {
+            routesByDir.set(rkey, {
+              r: entry.route_short,
+              c: entry.route_color,
+              d: entry.dir,
+              h: entry.headsign
+            });
+          }
+        }
+      }
+    }
+    stationEntries.push({
+      k: slug,
+      r: [...routesByDir.values()].sort((a, b) => a.r.localeCompare(b.r) || a.d.localeCompare(b.d))
+    });
   }
+
+  const stationsBin = buildStationsBin(stationEntries, schedule.generated_at);
 
   return {
     generated_at: schedule.generated_at,
     stations: schedule.stations ?? {},
     data,
     byTrip,
-    serializedStations,
-    serializedRoutes,
-    serializedKeyNames,
-    serializedValues: new Map(),
     allowedTripIds: new Set(byTrip.keys()),
     stopIdByKey,
+    slugByStopId,
+    stationsBin,
   };
 }
 
 /**
- * Build a JSON string from baseline + live overrides.
- * Mutates baseline.data[key].startIdx to slide past stale entries.
- * Uses pre-serialized strings for clean keys — only dirty keys are re-serialized.
+ * Build arrivals/current.bin from baseline + live overrides.
  */
 export function applyLive(
   baseline: Baseline,
   liveByTripId: Map<string, TripPrediction>,
   nowOverride?: number,
-): string {
+): Uint8Array {
   const now = nowOverride ?? Math.floor(Date.now() / 1000);
   const cutoff = now - CUTOFF_SECONDS;
+  const horizon = now + HORIZON_SECONDS;
 
-  const dirtyKeys = new Set<string>();
-  for (const tripId of liveByTripId.keys()) {
-    const slots = baseline.byTrip.get(tripId);
-    if (!slots) continue;
-    for (const { key } of slots) dirtyKeys.add(key);
-  }
-
-  const dataParts: string[] = [];
+  const groupedPatched = new Map<string, Array<BinArrival & { e: number }>>();
 
   for (const key in baseline.data) {
     const baseEntry = baseline.data[key];
+    const stopId = baseline.stopIdByKey.get(key)!;
+    const slug = baseline.slugByStopId.get(stopId);
+    if (!slug) continue;
 
     while (
       baseEntry.startIdx < baseEntry.arrivals.length &&
@@ -148,39 +171,37 @@ export function applyLive(
     ) {
       baseEntry.startIdx++;
     }
-    if (baseEntry.startIdx >= baseEntry.arrivals.length) continue;
 
-    const end = Math.min(baseEntry.startIdx + MAX_PER_KEY, baseEntry.arrivals.length);
-    const qkey = baseline.serializedKeyNames.get(key)!;
+    const { r, g, b } = hexToRgb(baseEntry.route_color);
+    let list = groupedPatched.get(slug);
+    if (!list) { list = []; groupedPatched.set(slug, list); }
 
-    if (!dirtyKeys.has(key)) {
-      let cached = baseline.serializedValues.get(key);
-      if (!cached || cached.atIdx !== baseEntry.startIdx) {
-        const str = JSON.stringify({ a: baseEntry.arrivals.slice(baseEntry.startIdx, end) });
-        cached = { str, atIdx: baseEntry.startIdx };
-        baseline.serializedValues.set(key, cached);
-      }
-      dataParts.push(`${qkey}:${cached.str}`);
-      continue;
-    }
-
-    const stopId = baseline.stopIdByKey.get(key)!;
-    const patched: StoredArrivalEntry[] = [];
+    const end = baseEntry.arrivals.length;
     for (let i = baseEntry.startIdx; i < end; i++) {
       const live = liveByTripId.get(baseEntry.tripIds[i]);
-      patched.push(patchEntry(baseEntry.arrivals[i], stopId, live));
-    }
+      const patched = patchEntry(baseEntry.arrivals[i], stopId, live);
+      
+      if (patched.e < cutoff || patched.e > horizon) continue;
 
-    const filtered = patched
-      .filter(a => a.e >= cutoff)
-      .sort((a, b) => a.e - b.e);
-
-    if (filtered.length > 0) {
-      dataParts.push(`${qkey}:${JSON.stringify({ a: filtered })}`);
+      list.push({
+        r, g, b,
+        route: baseEntry.route_short,
+        dir: baseEntry.dir,
+        headsign: baseEntry.headsign,
+        time: patched.t,
+        label: patched.l ?? "",
+        e: patched.e,
+      });
     }
   }
 
-  return `{"generated_at":${now},"stations":${baseline.serializedStations},"routes":${baseline.serializedRoutes},"data":{${dataParts.join(",")}}}`;
+  const finalMap = new Map<string, BinArrival[]>();
+  for (const [slug, arrivals] of groupedPatched) {
+    arrivals.sort((a, b) => a.e - b.e);
+    finalMap.set(slug, arrivals.map(({ e, ...rest }) => rest));
+  }
+
+  return buildArrivalsBin(finalMap, now);
 }
 
 function patchEntry(
