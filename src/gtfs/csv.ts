@@ -7,8 +7,8 @@ export class CsvStreamParser {
   private buf = "";
   private decoder = new TextDecoder();
 
-  push(chunk: Uint8Array, _final: boolean): Record<string, string>[] {
-    this.buf += this.decoder.decode(chunk, { stream: true });
+  push(chunk: Uint8Array, final: boolean): Record<string, string>[] {
+    this.buf += this.decoder.decode(chunk, { stream: !final });
     const rows: Record<string, string>[] = [];
     let start = 0;
 
