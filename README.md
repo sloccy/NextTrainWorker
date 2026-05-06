@@ -48,16 +48,14 @@ See `sample-response.json` for the full response shape.
 npx wrangler login
 ```
 
-### 2. Create KV namespace and R2 bucket
+### 2. Create R2 bucket
 
 ```bash
-npx wrangler kv namespace create SCHEDULE_KV
-npx wrangler kv namespace create SCHEDULE_KV --preview
 npx wrangler r2 bucket create nexttrainworker-arrivals
 npx wrangler r2 bucket create nexttrainworker-arrivals-preview
 ```
 
-Copy the KV namespace IDs into `wrangler.toml`. The R2 bucket names are already set in `wrangler.toml`.
+The R2 bucket names are already set in `wrangler.toml`.
 
 ### 3. Deploy the Worker
 
@@ -70,7 +68,7 @@ npm run deploy
 The static schedule is built by GitHub Actions (not the Worker) to avoid Cloudflare's free-tier CPU limit.
 
 1. Push this repo to GitHub
-2. Create a Cloudflare API token at **dash.cloudflare.com/profile/api-tokens** with permission: `Account → Workers KV Storage → Edit`
+2. Create a Cloudflare API token at **dash.cloudflare.com/profile/api-tokens** with permission: `Account → Workers R2 Storage → Edit` (and/or Workers Edit)
 3. Add it as a GitHub repo secret named `CLOUDFLARE_API_TOKEN`
 
 ### 5. Seed initial data
