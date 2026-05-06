@@ -1,8 +1,7 @@
 import type { Env } from "../types.js";
 import { writeArrivalsBin } from "../r2.js";
 import { fetchTripUpdates } from "../live/tripupdate.js";
-import { applyLive } from "../live/merge.js";
-import { BASELINE_BYTES } from "../baseline.generated.js";
+import { patchLive } from "../live/merge.js";
 
 export async function handleRefreshLive(env: Env, ctx: ExecutionContext): Promise<void> {
   let live;
@@ -12,7 +11,5 @@ export async function handleRefreshLive(env: Env, ctx: ExecutionContext): Promis
     console.error("[refresh-live] GTFS-RT fetch failed:", err);
     live = new Map<number, number>();
   }
-
-  const bin = applyLive(BASELINE_BYTES, live);
-  ctx.waitUntil(writeArrivalsBin(env, bin));
+  ctx.waitUntil(writeArrivalsBin(env, patchLive(live)));
 }

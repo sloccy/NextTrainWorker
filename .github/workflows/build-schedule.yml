@@ -18,13 +18,13 @@ jobs:
 
       - run: npm ci
 
-      - name: Build schedule + upload stations.bin to R2
+      - name: Build schedule and emit bundled template + stations
         run: npx tsx scripts/seed-schedule.ts
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: Deploy worker with bundled baseline
+      - name: Deploy worker with bundled template
         run: npx wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
