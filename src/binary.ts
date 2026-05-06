@@ -31,9 +31,9 @@ export interface StationWire {
 // ─── Low-level writers ────────────────────────────────────────────────────────
 
 export function w8(buf: number[], v: number): void { buf.push(v & 0xFF); }
-export function w16be(buf: number[], v: number): void { buf.push((v >>> 8) & 0xFF, v & 0xFF); }
-export function w32be(buf: number[], v: number): void {
-  buf.push((v >>> 24) & 0xFF, (v >>> 16) & 0xFF, (v >>> 8) & 0xFF, v & 0xFF);
+export function w16(buf: number[], v: number): void { buf.push(v & 0xFF, (v >>> 8) & 0xFF); }
+export function w32(buf: number[], v: number): void {
+  buf.push(v & 0xFF, (v >>> 8) & 0xFF, (v >>> 16) & 0xFF, (v >>> 24) & 0xFF);
 }
 export function wLpStr(buf: number[], s: string, maxLen: number): void {
   const t = s.slice(0, maxLen);
@@ -59,6 +59,16 @@ export function hashTripId(s: string): number {
   return h >>> 0;
 }
 
+export function hashTripIdBytes(buf: Uint8Array, start: number, len: number): number {
+  let h = 0x811c9dc5;
+  const end = start + len;
+  for (let i = start; i < end; i++) {
+    h ^= buf[i];
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
 // ─── Dictionary Encoding ──────────────────────────────────────────────────────
 
 export class Dictionary {
@@ -77,7 +87,7 @@ export class Dictionary {
   }
 
   write(buf: number[]): void {
-    w16be(buf, this.list.length);
+    w16(buf, this.list.length);
     for (const s of this.list) wLpStr(buf, s, 64);
   }
 }
@@ -92,42 +102,33 @@ export function scanArrivalsBin(
   slug: string,
   pairs: Array<{ route: string; dir: string }>,
 ): { buf: Uint8Array; generatedAt: number } | null {
-  if (bin.length < 6) return null;
+  if (bin.length < 10) return null;
 
   let pos = 0;
-  const generatedAt = ((bin[pos++] << 24) | (bin[pos++] << 16) | (bin[pos++] << 8) | bin[pos++]) >>> 0;
+  const generatedAt = (bin[pos++] | (bin[pos++] << 8) | (bin[pos++] << 16) | (bin[pos++] << 24)) >>> 0;
+  const baseMidnightUTC = (bin[pos++] | (bin[pos++] << 8) | (bin[pos++] << 16) | (bin[pos++] << 24)) >>> 0;
+  const cutoffMonoMins = Math.floor((Date.now() / 1000 - baseMidnightUTC) / 60) - 5;
 
-  // Dictionary is in current.bin
-  const dictCount = (bin[pos++] << 8) | bin[pos++];
-  const dict: string[] = [];
+  // Dictionary stored as offsets — no string allocation
+  const dictCount = bin[pos++] | (bin[pos++] << 8);
+  const dictOffsets: number[] = [];
   for (let i = 0; i < dictCount; i++) {
     const len = bin[pos++];
-    let s = "";
-    for (let j = 0; j < len; j++) s += String.fromCharCode(bin[pos + j]);
-    dict.push(s);
+    dictOffsets.push(pos);
     pos += len;
   }
 
-  const numStations = (bin[pos++] << 8) | bin[pos++];
+  const numStations = bin[pos++] | (bin[pos++] << 8);
 
-  const pairSet = new Set<string>();
-  const routeToId = new Map<string, number>();
-  for (let i = 0; i < dict.length; i++) routeToId.set(dict[i], i);
-  for (const p of pairs) {
-    const rid = routeToId.get(p.route);
-    if (rid !== undefined) pairSet.add(`${rid}:${p.dir}`);
-  }
-
-  const slugBytes = new TextEncoder().encode(slug);
   let dataOffset = -1;
   for (let i = 0; i < numStations; i++) {
     const slen = bin[pos++];
-    let match = slen === slugBytes.length;
+    let match = slen === slug.length;
     if (match) {
-      for (let j = 0; j < slen; j++) if (bin[pos + j] !== slugBytes[j]) { match = false; break; }
+      for (let j = 0; j < slen; j++) if (bin[pos + j] !== slug.charCodeAt(j)) { match = false; break; }
     }
     pos += slen;
-    const off = ((bin[pos] << 24) | (bin[pos + 1] << 16) | (bin[pos + 2] << 8) | bin[pos + 3]) >>> 0;
+    const off = (bin[pos] | (bin[pos + 1] << 8) | (bin[pos + 2] << 16) | (bin[pos + 3] << 24)) >>> 0;
     pos += 4;
     if (match) { dataOffset = off; break; }
   }
@@ -135,37 +136,57 @@ export function scanArrivalsBin(
   if (dataOffset < 0) return null;
 
   pos = dataOffset;
-  const count = (bin[pos++] << 8) | bin[pos++];
+  const count = bin[pos++] | (bin[pos++] << 8);
   const out: number[] = [];
   let outCount = 0;
 
   for (let i = 0; i < count && outCount < 10; i++) {
     const routeIdx = bin[pos++];
     const dirCode = bin[pos++];
-    const timeMinsHi = bin[pos++];
-    const timeMinsLo = bin[pos++];
+    const monoMins = bin[pos++] | (bin[pos++] << 8);
     const delayStatus = bin[pos++];
 
-    if (!pairSet.has(`${routeIdx}:${dirCode - 0 /* normalize dirCode to ASCII char later? no, it's already ASCII byte */}`)) {
-        // Wait, pairSet uses ${rid}:${dir}.
-        if (!pairSet.has(`${routeIdx}:${String.fromCharCode(dirCode)}`)) continue;
-    }
+    if (monoMins < cutoffMonoMins) continue;
 
-    const routeStr = dict[routeIdx] || "";
-    wLpStr(out, routeStr, 8);
-    out.push(dirCode, timeMinsHi, timeMinsLo, delayStatus);
+    const dirChar = String.fromCharCode(dirCode);
+
+    // Byte-compare route against dictionary — avoids string allocation
+    let pairMatch = false;
+    for (let j = 0; j < pairs.length; j++) {
+      const p = pairs[j];
+      if (p.dir !== dirChar) continue;
+      const dOff = dictOffsets[routeIdx];
+      const dLen = bin[dOff - 1];
+      if (dLen !== p.route.length) continue;
+      let match = true;
+      for (let k = 0; k < dLen; k++) {
+        if (bin[dOff + k] !== p.route.charCodeAt(k)) { match = false; break; }
+      }
+      if (match) { pairMatch = true; break; }
+    }
+    if (!pairMatch) continue;
+
+    const dOff = dictOffsets[routeIdx];
+    const dLen = bin[dOff - 1];
+    const timeMins = monoMins % 1440;
+    out.push(dLen);
+    for (let k = 0; k < dLen; k++) out.push(bin[dOff + k]);
+    out.push(dirCode, (timeMins >>> 8) & 0xFF, timeMins & 0xFF, delayStatus);
     outCount++;
   }
 
-  return { buf: new Uint8Array([outCount, ...out]), generatedAt };
+  const res = new Uint8Array(out.length + 1);
+  res[0] = outCount;
+  for (let i = 0; i < out.length; i++) res[i + 1] = out[i];
+  return { buf: res, generatedAt };
 }
 
 // ─── arrivals/stations.bin ────────────────────────────────────────────────────
 
 export function buildStationsBin(stations: StationWire[], generatedAt: number): Uint8Array {
   const buf: number[] = [];
-  w32be(buf, generatedAt);
-  w16be(buf, stations.length);
+  w32(buf, generatedAt);
+  w16(buf, stations.length);
   for (const st of stations) {
     wLpStr(buf, st.k, 39);
     w8(buf, st.r.length);

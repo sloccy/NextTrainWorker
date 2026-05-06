@@ -8,7 +8,7 @@
  * inspects tripRelationship to mark canceled trips.
  */
 
-import { hashTripId } from "../binary.js";
+import { hashTripIdBytes } from "../binary.js";
 
 const td = new TextDecoder();
 
@@ -16,43 +16,46 @@ class Reader {
   pos = 0;
   constructor(readonly buf: Uint8Array) {}
 
-  tag(): [field: number, wtype: number] {
-    const v = this.varint();
-    return [v >>> 3, v & 7];
+  tag(): number {
+    return this.varint();
   }
 
   varint(): number {
-    let lo = 0, hi = 0;
-    for (let s = 0; s < 64; s += 7) {
-      const b = this.buf[this.pos++];
-      if (s < 28) {
-        lo |= (b & 0x7f) << s;
-      } else if (s === 28) {
-        lo |= (b & 0xf) << 28;
-        hi = (b >>> 4) & 0x7;
-      } else {
-        hi |= (b & 0x7f) << (s - 32);
-      }
-      if (!(b & 0x80)) break;
+    let b = this.buf[this.pos++];
+    if (!(b & 0x80)) return b;
+    let res = b & 0x7f;
+    b = this.buf[this.pos++];
+    res |= (b & 0x7f) << 7;
+    if (!(b & 0x80)) return res;
+    b = this.buf[this.pos++];
+    res |= (b & 0x7f) << 14;
+    if (!(b & 0x80)) return res;
+    b = this.buf[this.pos++];
+    res |= (b & 0x7f) << 21;
+    if (!(b & 0x80)) return res;
+    b = this.buf[this.pos++];
+    res += (b & 0x7f) * 268435456; // 2^28
+    if (!(b & 0x80)) return res;
+    
+    let shift = 35;
+    while (shift < 64) {
+      b = this.buf[this.pos++];
+      res += (b & 0x7f) * Math.pow(2, shift);
+      if (!(b & 0x80)) return res;
+      shift += 7;
     }
-    return hi === 0 ? lo >>> 0 : hi * 0x100000000 + (lo >>> 0);
-  }
-
-  bytes(): Uint8Array {
-    const len = this.varint();
-    return this.buf.subarray(this.pos, (this.pos += len));
-  }
-
-  str(): string {
-    return td.decode(this.bytes());
+    return res;
   }
 
   skip(wtype: number): void {
-    switch (wtype) {
-      case 0: while (this.buf[this.pos++] & 0x80); break;
-      case 1: this.pos += 8; break;
-      case 2: this.pos += this.varint(); break;
-      case 5: this.pos += 4; break;
+    if (wtype === 0) {
+      while (this.buf[this.pos++] & 0x80);
+    } else if (wtype === 2) {
+      this.pos += this.varint();
+    } else if (wtype === 1) {
+      this.pos += 8;
+    } else if (wtype === 5) {
+      this.pos += 4;
     }
   }
 }
@@ -61,51 +64,70 @@ class Reader {
 export function decodeFeedMessage(buf: Uint8Array): Map<number, number> {
   const out = new Map<number, number>();
   const r = new Reader(buf);
+  let entityCount = 0;
   while (r.pos < buf.length) {
-    const [f, w] = r.tag();
-    if (f === 2 && w === 2) parseEntity(r.bytes(), out);
-    else r.skip(w);
+    const t = r.tag();
+    const f = t >>> 3;
+    const w = t & 7;
+    if (f === 2 && w === 2) {
+      const len = r.varint();
+      const end = r.pos + len;
+      parseEntity(r, end, out);
+      r.pos = end;
+      entityCount++;
+    } else r.skip(w);
   }
+  console.log(`[proto] Decoded ${entityCount} entities, found ${out.size} updates`);
   return out;
 }
 
-function parseEntity(buf: Uint8Array, out: Map<number, number>): void {
-  const r = new Reader(buf);
-  while (r.pos < buf.length) {
-    const [f, w] = r.tag();
-    if (f === 3 && w === 2) parseTripUpdate(r.bytes(), out);
-    else r.skip(w);
+function parseEntity(r: Reader, end: number, out: Map<number, number>): void {
+  while (r.pos < end) {
+    const t = r.tag();
+    const f = t >>> 3;
+    const w = t & 7;
+    if (f === 3 && w === 2) {
+      const len = r.varint();
+      const innerEnd = r.pos + len;
+      parseTripUpdate(r, innerEnd, out);
+      r.pos = innerEnd;
+    } else r.skip(w);
   }
 }
 
-function parseTripUpdate(buf: Uint8Array, out: Map<number, number>): void {
-  const r = new Reader(buf);
+function parseTripUpdate(r: Reader, end: number, out: Map<number, number>): void {
   let tripIdHash = 0;
   let tripRelationship = 0;
 
-  while (r.pos < buf.length) {
-    const [f, w] = r.tag();
+  while (r.pos < end) {
+    const t = r.tag();
+    const f = t >>> 3;
+    const w = t & 7;
     if (f === 1 && w === 2) {
-      const [hash, rel] = parseTripDescriptor(r.bytes());
-      tripIdHash = hash;
-      tripRelationship = rel;
+      const len = r.varint();
+      const innerEnd = r.pos + len;
+      
+      // Inline parseTripDescriptor to avoid array allocation
+      while (r.pos < innerEnd) {
+        const t2 = r.tag();
+        const f2 = t2 >>> 3;
+        const w2 = t2 & 7;
+        if (f2 === 1 && w2 === 2) {
+          const vlen = r.varint();
+          tripIdHash = hashTripIdBytes(r.buf, r.pos, vlen);
+          r.pos += vlen;
+        } else if (f2 === 4 && w2 === 0) {
+          tripRelationship = r.varint();
+        } else {
+          r.skip(w2);
+        }
+      }
+      r.pos = innerEnd;
+      break;
     } else {
       r.skip(w);
     }
   }
 
   if (tripIdHash) out.set(tripIdHash, tripRelationship);
-}
-
-function parseTripDescriptor(buf: Uint8Array): [tripIdHash: number, schedRel: number] {
-  const r = new Reader(buf);
-  let tripIdHash = 0;
-  let schedRel = 0;
-  while (r.pos < buf.length) {
-    const [f, w] = r.tag();
-    if (f === 1 && w === 2) tripIdHash = hashTripId(r.str());
-    else if (f === 4 && w === 0) schedRel = r.varint();
-    else r.skip(w);
-  }
-  return [tripIdHash, schedRel];
 }

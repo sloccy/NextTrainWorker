@@ -8,7 +8,7 @@ import {
 } from "./service-days.js";
 import { inferDirections } from "./direction.js";
 import {
-  w8, w16be, w32be, wLpStr, hashTripId, Dictionary,
+  w8, w16, w32, wLpStr, hashTripId, Dictionary,
   type StationWire, buildStationsBin
 } from "../binary.js";
 
@@ -18,7 +18,8 @@ const WINDOW_DAYS = 1; // 24-hour window
 
 export interface BuiltSchedules {
   generatedAt: number;
-  baselineBin: Uint8Array;
+  templateBin: Uint8Array;
+  hashOffsets: Uint32Array;
   stationsBin: Uint8Array;
 }
 
@@ -154,46 +155,66 @@ export async function buildSchedule(): Promise<BuiltSchedules> {
     }
   }
 
-  // Encode baseline.bin (custom format for worker)
+  // Build template binary (current.bin wire format, all delay_status=0) + hash→offset index
   const slugs = [...stationArrivals.keys()].sort();
   const dict = new Dictionary();
-  const dataBlocks: number[][] = [];
+
+  // Pass 1: build per-station data blocks (populates dict, tracks status byte offsets)
+  const tDataBlocks: Array<{ bytes: number[]; entryHashes: number[] }> = [];
   for (const slug of slugs) {
     const arrivals = stationArrivals.get(slug)!.sort((a, b) => a.e - b.e);
-    const block: number[] = [];
-    w16be(block, arrivals.length);
+    const bytes: number[] = [];
+    const entryHashes: number[] = [];
+    w16(bytes, arrivals.length);
     for (const a of arrivals) {
-      w8(block, dict.get(a.route));
-      w8(block, a.dir.charCodeAt(0));
-      w16be(block, a.monoMins);
-      w32be(block, hashTripId(a.tripId));
+      w8(bytes, dict.get(a.route));
+      w8(bytes, a.dir.charCodeAt(0));
+      w16(bytes, a.monoMins);
+      w8(bytes, 0); // delay_status placeholder; worker patches per-tick
+      entryHashes.push(hashTripId(a.tripId));
     }
-    dataBlocks.push(block);
+    tDataBlocks.push({ bytes, entryHashes });
   }
 
-  const baselineResult: number[] = [];
+  // Build header (dict now fully populated)
   const generatedAt = Math.floor(now / 1000);
-  w32be(baselineResult, generatedAt);
-  w32be(baselineResult, baseMidnightUTC);
-  dict.write(baselineResult);
-  w16be(baselineResult, slugs.length);
+  const tResult: number[] = [];
+  w32(tResult, 0);               // generated_at placeholder — worker overwrites per tick
+  w32(tResult, baseMidnightUTC); // /a uses this to compute the cutoff
+  dict.write(tResult);
+  w16(tResult, slugs.length);
 
-  let indexSize = 0;
-  const indexEntries: number[][] = [];
+  // Build index
+  const tIndexEntries: number[][] = [];
+  let tIndexSize = 0;
   for (const slug of slugs) {
     const e: number[] = [];
     wLpStr(e, slug, 64);
-    indexSize += e.length + 4;
-    indexEntries.push(e);
+    tIndexSize += e.length + 4;
+    tIndexEntries.push(e);
+  }
+  let tOffset = tResult.length + tIndexSize;
+  for (let i = 0; i < slugs.length; i++) {
+    tResult.push(...tIndexEntries[i]);
+    w32(tResult, tOffset);
+    tOffset += tDataBlocks[i].bytes.length;
   }
 
-  let offset = baselineResult.length + indexSize;
+  // Write data + record (hash, statusByteOffset) pairs
+  const hashOffsetPairs: number[] = [];
+  let tBlockBase = tResult.length;
   for (let i = 0; i < slugs.length; i++) {
-    baselineResult.push(...indexEntries[i]);
-    w32be(baselineResult, offset);
-    offset += dataBlocks[i].length;
+    const { bytes, entryHashes } = tDataBlocks[i];
+    for (let j = 0; j < entryHashes.length; j++) {
+      // entry layout: [routeIdx u8][dir u8][monoLo u8][monoHi u8][status u8]
+      hashOffsetPairs.push(entryHashes[j], tBlockBase + 2 + j * 5 + 4);
+    }
+    tResult.push(...bytes);
+    tBlockBase += bytes.length;
   }
-  for (const block of dataBlocks) baselineResult.push(...block);
+
+  const templateBin = new Uint8Array(tResult);
+  const hashOffsets = new Uint32Array(hashOffsetPairs);
 
   // Encode stations.bin (wire format for phone)
   const stationEntries: StationWire[] = [];
@@ -221,7 +242,8 @@ export async function buildSchedule(): Promise<BuiltSchedules> {
 
   return {
     generatedAt,
-    baselineBin: new Uint8Array(baselineResult),
+    templateBin,
+    hashOffsets,
     stationsBin
   };
 }
