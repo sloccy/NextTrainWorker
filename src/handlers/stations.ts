@@ -5,6 +5,7 @@ export function handleStations(): Response {
     headers: {
       "Content-Type": "application/octet-stream",
       "Cache-Control": "public, max-age=3600",
+      "Access-Control-Allow-Origin": "*",
     },
   });
 }
