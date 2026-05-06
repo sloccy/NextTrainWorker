@@ -56,6 +56,7 @@ export async function handleArrivals(request: Request, env: Env): Promise<Respon
       "Content-Type": "application/octet-stream",
       "X-Next-Refresh": String(n),
       "Cache-Control": "public, max-age=20",
+      "Access-Control-Allow-Origin": "*",
     },
   });
 }
