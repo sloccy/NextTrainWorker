@@ -69,6 +69,40 @@ export function hashTripIdBytes(buf: Uint8Array, start: number, len: number): nu
   return h >>> 0;
 }
 
+// Build-time: compositeHash = fnv1a(tripId + ":" + stopId).
+export function hashTripIdStopId(tripId: string, stopId: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < tripId.length; i++) {
+    h ^= tripId.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  h ^= 0x3a; // ":"
+  h = Math.imul(h, 0x01000193);
+  for (let i = 0; i < stopId.length; i++) {
+    h ^= stopId.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+// Runtime: continue the FNV state from a precomputed trip hash with ":<stopId>" bytes.
+// `tripIdHash` must be the unsigned 32-bit value returned by hashTripIdBytes.
+export function continueHashWithStopBytes(
+  tripIdHash: number,
+  buf: Uint8Array,
+  start: number,
+  len: number,
+): number {
+  let h = tripIdHash ^ 0x3a;
+  h = Math.imul(h, 0x01000193);
+  const end = start + len;
+  for (let i = start; i < end; i++) {
+    h ^= buf[i];
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
 // ─── Dictionary Encoding ──────────────────────────────────────────────────────
 
 export class Dictionary {
