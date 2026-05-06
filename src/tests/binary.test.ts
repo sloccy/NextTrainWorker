@@ -139,4 +139,50 @@ describe("scanArrivalsBin Filtering", () => {
       Date.now = realDateNow;
     }
   });
+
+  it("keeps an 'On Time' (130) train that is exactly at the cutoff", () => {
+    const fakeNow = BASE_MIDNIGHT + 610 * 60; // 10:10 AM
+    // Cutoff: 605 mins.
+    const bin = buildTestTemplate(BASE_MIDNIGHT, [{
+      slug: "test-station",
+      arrivals: [
+        { route: "D", dir: "N", monoMins: 605, delayStatus: 130 }
+      ]
+    }]);
+
+    const realDateNow = Date.now;
+    Date.now = () => fakeNow * 1000;
+
+    try {
+      const result = scanArrivalsBin(bin, "test-station", [{ route: "D", dir: "N" }]);
+      expect(result).not.toBeNull();
+      expect(result!.buf[0]).toBe(1);
+    } finally {
+      Date.now = realDateNow;
+    }
+  });
+
+  it("keeps Canceled (128) and Skipped (129) trains if scheduled in future", () => {
+    const fakeNow = BASE_MIDNIGHT + 610 * 60; // 10:10 AM
+    // Cutoff: 605 mins.
+    const bin = buildTestTemplate(BASE_MIDNIGHT, [{
+      slug: "test-station",
+      arrivals: [
+        { route: "D", dir: "N", monoMins: 615, delayStatus: 128 },
+        { route: "E", dir: "S", monoMins: 615, delayStatus: 129 }
+      ]
+    }]);
+
+    const realDateNow = Date.now;
+    Date.now = () => fakeNow * 1000;
+
+    try {
+      const resultD = scanArrivalsBin(bin, "test-station", [{ route: "D", dir: "N" }]);
+      expect(resultD!.buf[0]).toBe(1);
+      const resultE = scanArrivalsBin(bin, "test-station", [{ route: "E", dir: "S" }]);
+      expect(resultE!.buf[0]).toBe(1);
+    } finally {
+      Date.now = realDateNow;
+    }
+  });
 });

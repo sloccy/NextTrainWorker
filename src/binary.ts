@@ -185,6 +185,8 @@ export function scanArrivalsBin(
       delayMins = delayStatus;
     } else if (delayStatus >= 131) {
       delayMins = delayStatus - 256;
+    } else if (delayStatus === 130 || delayStatus === 128 || delayStatus === 129) {
+      delayMins = 0;
     }
 
     if (monoMins + delayMins < cutoffMonoMins) continue;
