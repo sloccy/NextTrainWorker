@@ -180,7 +180,14 @@ export function scanArrivalsBin(
     const monoMins = bin[pos++] | (bin[pos++] << 8);
     const delayStatus = bin[pos++];
 
-    if (monoMins < cutoffMonoMins) continue;
+    let delayMins = 0;
+    if (delayStatus > 0 && delayStatus <= 127) {
+      delayMins = delayStatus;
+    } else if (delayStatus >= 131) {
+      delayMins = delayStatus - 256;
+    }
+
+    if (monoMins + delayMins < cutoffMonoMins) continue;
 
     const dirChar = String.fromCharCode(dirCode);
 
