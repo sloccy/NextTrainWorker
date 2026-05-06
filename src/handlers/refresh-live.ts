@@ -5,11 +5,13 @@ import { patchLive } from "../live/merge.js";
 
 export async function handleRefreshLive(env: Env, ctx: ExecutionContext): Promise<void> {
   let live;
+  let fresh;
   try {
-    live = await fetchTripUpdates();
+    ({ live, fresh } = await fetchTripUpdates());
   } catch (err) {
     console.error("[refresh-live] GTFS-RT fetch failed:", err);
     live = new Map<number, number>();
+    fresh = true;
   }
-  ctx.waitUntil(writeArrivalsBin(env, patchLive(live)));
+  if (fresh) ctx.waitUntil(writeArrivalsBin(env, patchLive(live)));
 }

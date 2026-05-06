@@ -10,25 +10,24 @@ let cachedEtag: string | null = null;
 let cachedLastModified: string | null = null;
 let cachedLive: LiveByTripIdHash = new Map();
 
-export async function fetchTripUpdates(): Promise<LiveByTripIdHash> {
+/** Returns { live, fresh: false } on 304 — caller should skip R2 write. */
+export async function fetchTripUpdates(): Promise<{ live: LiveByTripIdHash; fresh: boolean }> {
   const headers: Record<string, string> = { "Accept-Encoding": "gzip" };
   if (cachedEtag) headers["If-None-Match"] = cachedEtag;
   if (cachedLastModified) headers["If-Modified-Since"] = cachedLastModified;
 
   const resp = await fetch(TRIPUPDATE_URL, { headers });
 
-  if (resp.status === 304) return cachedLive;
+  if (resp.status === 304) return { live: cachedLive, fresh: false };
 
   if (!resp.ok) {
     throw new Error(`TripUpdate fetch failed: ${resp.status} ${resp.statusText}`);
   }
 
   const buffer = await resp.arrayBuffer();
-  const live = decodeFeedMessage(new Uint8Array(buffer));
-
+  cachedLive = decodeFeedMessage(new Uint8Array(buffer));
   cachedEtag = resp.headers.get("etag");
   cachedLastModified = resp.headers.get("last-modified");
-  cachedLive = live;
 
-  return live;
+  return { live: cachedLive, fresh: true };
 }
