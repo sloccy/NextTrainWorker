@@ -1,16 +1,13 @@
 /**
  * Minimal GTFS-RT FeedMessage decoder.
  *
- * Only reads the fields the merge actually uses:
- *   entity[].trip_update.trip.{trip_id, schedule_relationship}
- *
- * Per-stop arrival/departure times are intentionally skipped — merge.ts only
- * inspects tripRelationship to mark canceled trips.
+ * Reads from each TripUpdate:
+ *   trip.{trip_id, schedule_relationship}
+ *   stop_time_update[].{stop_id, arrival.delay, schedule_relationship}
  */
 
-import { hashTripIdBytes } from "../binary.js";
+import { hashTripIdBytes, continueHashWithStopBytes } from "../binary.js";
 
-// Module-level singleton; reset buf+pos on each call to avoid per-tick allocation.
 const r = {
   buf: new Uint8Array(0) as Uint8Array,
   pos: 0,
@@ -31,9 +28,24 @@ const r = {
     b = this.buf[this.pos++];
     res += (b & 0x7f) * 268435456; // 2^28
     if (!(b & 0x80)) return res;
-    // Values >= 2^35 never appear in RTD's feed; just drain remaining bytes.
     while (this.buf[this.pos++] & 0x80);
     return res;
+  },
+
+  // Signed int32 varint (negative values use 10-byte wire encoding).
+  varintI32(): number {
+    let b = this.buf[this.pos++];
+    let res = b & 0x7f;
+    if (!(b & 0x80)) return res;
+    b = this.buf[this.pos++]; res |= (b & 0x7f) << 7;
+    if (!(b & 0x80)) return res;
+    b = this.buf[this.pos++]; res |= (b & 0x7f) << 14;
+    if (!(b & 0x80)) return res;
+    b = this.buf[this.pos++]; res |= (b & 0x7f) << 21;
+    if (!(b & 0x80)) return res | 0;
+    b = this.buf[this.pos++]; res |= (b & 0x0f) << 28;
+    if (b & 0x80) { while (this.buf[this.pos++] & 0x80); } // drain high bytes
+    return res | 0;
   },
 
   skip(wtype: number): void {
@@ -49,21 +61,34 @@ const r = {
   },
 };
 
-/** Returns Map<tripIdHash, tripRelationship>. */
-export function decodeFeedMessage(buf: Uint8Array): Map<number, number> {
+export interface LiveData {
+  tripStatus: Map<number, number>;    // tripIdHash → trip-level relationship (0=SCHEDULED, 3=CANCELED, 4=SKIPPED)
+  stopOverrides: Map<number, number>; // compositeHash(trip+stop) → bucketed u8 status byte
+}
+
+/** Bucket a signed delay in seconds into the wire-format s8 status byte (stored as u8). */
+function bucketDelay(delaySec: number, stopRel: number): number {
+  if (stopRel === 1) return 129;                          // -127 = SKIPPED at stop
+  if (delaySec > -60 && delaySec < 60) return 130;       // -126 = on time
+  let m = Math.round(delaySec / 60);
+  if (m < -125) m = -125;
+  if (m > 127) m = 127;
+  return m & 0xff;
+}
+
+export function decodeFeedMessage(buf: Uint8Array): LiveData {
   r.buf = buf;
   r.pos = 0;
-  const out = new Map<number, number>();
+  const tripStatus = new Map<number, number>();
+  const stopOverrides = new Map<number, number>();
   const len = buf.length;
 
-  // Outer loop: FeedMessage fields. Field 2 (wire 2) = entity.
   while (r.pos < len) {
     const t = buf[r.pos++];
     if (t === 0x12) {
       // field=2, wire=2 — FeedEntity
       const entityEnd = r.pos + r.varint();
 
-      // Entity fields. Field 3 (wire 2) = trip_update.
       while (r.pos < entityEnd) {
         const te = buf[r.pos++];
         if (te === 0x1a) {
@@ -72,7 +97,6 @@ export function decodeFeedMessage(buf: Uint8Array): Map<number, number> {
           let tripIdHash = 0;
           let tripRelationship = 0;
 
-          // TripUpdate fields. Field 1 (wire 2) = trip (TripDescriptor).
           while (r.pos < tuEnd) {
             const tt = buf[r.pos++];
             if (tt === 0x0a) {
@@ -81,25 +105,70 @@ export function decodeFeedMessage(buf: Uint8Array): Map<number, number> {
               while (r.pos < tdEnd) {
                 const td = buf[r.pos++];
                 if (td === 0x0a) {
-                  // field=1, wire=2 — trip_id string
                   const vlen = r.varint();
                   tripIdHash = hashTripIdBytes(buf, r.pos, vlen);
                   r.pos += vlen;
                 } else if (td === 0x20) {
-                  // field=4, wire=0 — schedule_relationship
                   tripRelationship = r.varint();
                 } else {
                   r.skip(td & 7);
                 }
               }
               r.pos = tdEnd;
-              break; // trip descriptor is only field we need in TripUpdate
+            } else if (tt === 0x12) {
+              // field=2, wire=2 — StopTimeUpdate (repeated)
+              const stuEnd = r.pos + r.varint();
+              let stopIdStart = -1, stopIdLen = 0;
+              let delaySec = 0, delayPresent = false;
+              let stopRel = 0;
+
+              while (r.pos < stuEnd) {
+                const ts = buf[r.pos++];
+                if (ts === 0x12 || ts === 0x1a) {
+                  // field=2 arrival or field=3 departure — StopTimeEvent
+                  const steEnd = r.pos + r.varint();
+                  // Only read delay from the first present event (arrival preferred)
+                  if (!delayPresent) {
+                    while (r.pos < steEnd) {
+                      const tse = buf[r.pos++];
+                      if (tse === 0x08) {
+                        // field=1, wire=0 — delay (int32, signed)
+                        delaySec = r.varintI32();
+                        delayPresent = true;
+                      } else {
+                        r.skip(tse & 7);
+                      }
+                    }
+                  }
+                  r.pos = steEnd;
+                } else if (ts === 0x22) {
+                  // field=4, wire=2 — stop_id string
+                  stopIdLen = r.varint();
+                  stopIdStart = r.pos;
+                  r.pos += stopIdLen;
+                } else if (ts === 0x28) {
+                  // field=5, wire=0 — schedule_relationship
+                  stopRel = r.varint();
+                } else {
+                  r.skip(ts & 7);
+                }
+              }
+              r.pos = stuEnd;
+
+              // Emit override if we have a stop_id and something to report
+              if (stopIdStart >= 0 && tripIdHash && (delayPresent || stopRel === 1)) {
+                const compHash = continueHashWithStopBytes(tripIdHash, buf, stopIdStart, stopIdLen);
+                const statusByte = bucketDelay(delaySec, stopRel);
+                // Store worst (highest absolute deviation); last write wins when same stop
+                // appears multiple times (shouldn't happen per GTFS-RT spec, but be safe).
+                stopOverrides.set(compHash, statusByte);
+              }
             } else {
               r.skip(tt & 7);
             }
           }
 
-          if (tripIdHash) out.set(tripIdHash, tripRelationship);
+          if (tripIdHash) tripStatus.set(tripIdHash, tripRelationship);
           r.pos = tuEnd;
         } else {
           r.skip(te & 7);
@@ -111,5 +180,5 @@ export function decodeFeedMessage(buf: Uint8Array): Map<number, number> {
     }
   }
 
-  return out;
+  return { tripStatus, stopOverrides };
 }
