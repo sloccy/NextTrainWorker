@@ -2,8 +2,6 @@ import type { Env, Direction } from "../types.js";
 import { getArrivalsBin } from "../r2.js";
 import { scanArrivalsBin } from "../binary.js";
 
-const VALID_DIRS = new Set<Direction>(["N", "S", "E", "W"]);
-
 export async function handleArrivals(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const station = url.searchParams.get("s");
