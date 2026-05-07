@@ -8,7 +8,7 @@ import {
 } from "./service-days.js";
 import { inferDirections } from "./direction.js";
 import {
-  w8, w16, w32, wLpStr, Dictionary,
+  w8, w16, w32, wLpStr, hashTripId, hashTripIdStopId, Dictionary,
   type StationWire, buildStationsBin
 } from "../binary.js";
 
@@ -19,8 +19,8 @@ const WINDOW_DAYS = 1; // 24-hour window
 export interface BuiltSchedules {
   generatedAt: number;
   templateBin: Uint8Array;
-  tripOffsets: Map<string, number[]>;
-  stopOffsets: Map<string, number[]>;
+  hashOffsets: Uint32Array;
+  stopHashOffsets: Uint32Array;
   stationsBin: Uint8Array;
 }
 
@@ -162,22 +162,22 @@ export async function buildSchedule(): Promise<BuiltSchedules> {
   const dict = new Dictionary();
 
   // Pass 1: build per-station data blocks (populates dict, tracks status byte offsets)
-  const tDataBlocks: Array<{ bytes: number[]; entryTripIds: string[]; entryStopKeys: string[] }> = [];
+  const tDataBlocks: Array<{ bytes: number[]; entryHashes: number[]; entryStopHashes: number[] }> = [];
   for (const slug of slugs) {
     const arrivals = stationArrivals.get(slug)!.sort((a, b) => a.e - b.e);
     const bytes: number[] = [];
-    const entryTripIds: string[] = [];
-    const entryStopKeys: string[] = [];
+    const entryHashes: number[] = [];
+    const entryStopHashes: number[] = [];
     w16(bytes, arrivals.length);
     for (const a of arrivals) {
       w8(bytes, dict.get(a.route));
       w8(bytes, a.dir.charCodeAt(0));
       w16(bytes, a.monoMins);
       w8(bytes, 0); // delay_status placeholder; worker patches per-tick
-      entryTripIds.push(a.tripId);
-      entryStopKeys.push(a.tripId + ":" + a.stopId);
+      entryHashes.push(hashTripId(a.tripId));
+      entryStopHashes.push(hashTripIdStopId(a.tripId, a.stopId));
     }
-    tDataBlocks.push({ bytes, entryTripIds, entryStopKeys });
+    tDataBlocks.push({ bytes, entryHashes, entryStopHashes });
   }
 
   // Build header (dict now fully populated)
@@ -204,30 +204,25 @@ export async function buildSchedule(): Promise<BuiltSchedules> {
     tOffset += tDataBlocks[i].bytes.length;
   }
 
-  // Write data + record (tripId, statusByteOffset) pairs
-  const tripOffsets = new Map<string, number[]>();
-  const stopOffsets = new Map<string, number[]>();
+  // Write data + record (hash, statusByteOffset) pairs
+  const hashOffsetPairs: number[] = [];
+  const stopHashOffsetPairs: number[] = [];
   let tBlockBase = tResult.length;
   for (let i = 0; i < slugs.length; i++) {
-    const { bytes, entryTripIds, entryStopKeys } = tDataBlocks[i];
-    for (let j = 0; j < entryTripIds.length; j++) {
+    const { bytes, entryHashes, entryStopHashes } = tDataBlocks[i];
+    for (let j = 0; j < entryHashes.length; j++) {
       // entry layout: [routeIdx u8][dir u8][monoLo u8][monoHi u8][status u8]
       const statusOff = tBlockBase + 2 + j * 5 + 4;
-      const key = entryTripIds[j];
-      let arr = tripOffsets.get(key);
-      if (!arr) { arr = []; tripOffsets.set(key, arr); }
-      arr.push(statusOff);
-
-      const stopKey = entryStopKeys[j];
-      let sarr = stopOffsets.get(stopKey);
-      if (!sarr) { sarr = []; stopOffsets.set(stopKey, sarr); }
-      sarr.push(statusOff);
+      hashOffsetPairs.push(entryHashes[j], statusOff);
+      stopHashOffsetPairs.push(entryStopHashes[j], statusOff);
     }
     tResult.push(...bytes);
     tBlockBase += bytes.length;
   }
 
   const templateBin = new Uint8Array(tResult);
+  const hashOffsets = new Uint32Array(hashOffsetPairs);
+  const stopHashOffsets = new Uint32Array(stopHashOffsetPairs);
 
   // Encode stations.bin (wire format for phone)
   const stationEntries: StationWire[] = [];
@@ -256,8 +251,8 @@ export async function buildSchedule(): Promise<BuiltSchedules> {
   return {
     generatedAt,
     templateBin,
-    tripOffsets,
-    stopOffsets,
+    hashOffsets,
+    stopHashOffsets,
     stationsBin,
   };
 }
