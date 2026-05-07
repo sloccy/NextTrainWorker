@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { inferDirections } from "../gtfs/direction.js";
+import { inferDirections } from "../build/direction.js";
 
 describe("inferDirections", () => {
   const stops = new Map([
-    ["DUS",  { lat: 39.7526, lon: -104.9993 }], // Union Station (Denver)
-    ["DEN",  { lat: 39.8561, lon: -104.6737 }], // Denver Airport
-    ["WMN",  { lat: 39.8640, lon: -105.0664 }], // Westminster (north of Denver)
-    ["JEF",  { lat: 39.7382, lon: -105.1032 }], // Lakewood/Jefferson (west)
+    ["DUS", { lat: 39.7526, lon: -104.9993 }],
+    ["DEN", { lat: 39.8561, lon: -104.6737 }],
+    ["WMN", { lat: 39.8640, lon: -105.0664 }],
+    ["JEF", { lat: 39.7382, lon: -105.1032 }],
   ]);
 
   it("classifies A Line as E outbound (DUS→DEN)", () => {

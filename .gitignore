@@ -4,6 +4,4 @@ dist/
 .claude/
 *.local
 arrivals/
-src/baseline.generated.ts
-src/template.generated.ts
-src/stations.generated.ts
+src/worker/generated/
