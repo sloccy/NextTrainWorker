@@ -171,10 +171,11 @@ export function scanArrivalsBin(
 
   pos = dataOffset;
   const count = bin[pos++] | (bin[pos++] << 8);
-  const out: number[] = [];
-  let outCount = 0;
+  // Buffer matching entries so we can sort by predicted time before emitting
+  type Entry = { routeIdx: number; dirCode: number; predictedMins: number; delayStatus: number };
+  const entries: Entry[] = [];
 
-  for (let i = 0; i < count && outCount < 10; i++) {
+  for (let i = 0; i < count; i++) {
     const routeIdx = bin[pos++];
     const dirCode = bin[pos++];
     const monoMins = bin[pos++] | (bin[pos++] << 8);
@@ -185,15 +186,11 @@ export function scanArrivalsBin(
       delayMins = delayStatus;
     } else if (delayStatus >= 131) {
       delayMins = delayStatus - 256;
-    } else if (delayStatus === 130 || delayStatus === 128 || delayStatus === 129) {
-      delayMins = 0;
     }
 
     if (monoMins + delayMins < cutoffMonoMins) continue;
 
     const dirChar = String.fromCharCode(dirCode);
-
-    // Byte-compare route against dictionary — avoids string allocation
     let pairMatch = false;
     for (let j = 0; j < pairs.length; j++) {
       const p = pairs[j];
@@ -209,13 +206,21 @@ export function scanArrivalsBin(
     }
     if (!pairMatch) continue;
 
+    entries.push({ routeIdx, dirCode, predictedMins: monoMins + delayMins, delayStatus });
+  }
+
+  entries.sort((a, b) => a.predictedMins - b.predictedMins);
+
+  const out: number[] = [];
+  const outCount = Math.min(entries.length, 10);
+  for (let i = 0; i < outCount; i++) {
+    const { routeIdx, dirCode, predictedMins, delayStatus } = entries[i];
     const dOff = dictOffsets[routeIdx];
     const dLen = bin[dOff - 1];
-    const timeMins = monoMins % 1440;
+    const timeMins = predictedMins % 1440;
     out.push(dLen);
     for (let k = 0; k < dLen; k++) out.push(bin[dOff + k]);
     out.push(dirCode, (timeMins >>> 8) & 0xFF, timeMins & 0xFF, delayStatus);
-    outCount++;
   }
 
   const res = new Uint8Array(out.length + 1);
