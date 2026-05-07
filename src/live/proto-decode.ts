@@ -132,6 +132,10 @@ export function decodeFeedMessage(buf: Uint8Array): LiveData {
                       if (tse === 0x08) {
                         delaySec = r.varintI32();
                         delayPresent = true;
+                      } else if (tse === 0x10) {
+                        // time field — realtime data exists but no explicit delay
+                        r.varint(); // consume the time value
+                        if (!delayPresent) { delaySec = 0; delayPresent = true; }
                       } else {
                         r.skip(tse & 7);
                       }
