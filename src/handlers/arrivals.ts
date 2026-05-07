@@ -42,12 +42,6 @@ export async function handleArrivals(request: Request, env: Env): Promise<Respon
     return new Response(`Station "${station}" not found`, { status: 404 });
   }
 
-  // scanArrivalsBin returns [count, ...data] in result.buf.
-  // result.buf[0] is the number of arrivals.
-  if (result.buf[0] === 0) {
-    return new Response("No matching arrivals", { status: 404 });
-  }
-
   const n = Math.max(result.generatedAt + 65, now + 30);
   return new Response(result.buf, {
     headers: {
