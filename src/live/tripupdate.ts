@@ -5,7 +5,7 @@ const EMPTY: LiveData = { tripStatus: new Map(), stopOverrides: new Map() };
 
 let cachedLive: LiveData | null = null;
 let cachedAt = 0;
-const STALE_MS = 30 * 60_000;
+const STALE_MS = 60 * 60_000;
 
 export async function fetchTripUpdates(): Promise<LiveData> {
   try {
