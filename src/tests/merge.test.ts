@@ -1,17 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { patchLiveWith } from "../live/merge.js";
-
-// Minimal template builder for tests:
-// header: [u32 genAt=0][u32 baseMidnight][u16 dictCount][u8 len][chars...][u16 numStations]
-// index:  [u8 slugLen][slug][u32 dataOffset]
-// data:   [u16 count] × [u8 routeIdx][u8 dir][u16 monoMins][u8 status=0]
+import { patchLiveWith } from "../worker/live/patch.js";
 
 interface Arrival {
   route: string;
   dir: string;
   monoMins: number;
   tripId: string;
-  stopKey?: string;
+  stopId?: string;
 }
 
 function buildTestTemplate(
@@ -19,8 +14,8 @@ function buildTestTemplate(
   stations: Array<{ slug: string; arrivals: Arrival[] }>,
 ): {
   template: Uint8Array;
-  offsets: Map<string, number[]>;
-  stopOffsets: Map<string, number[]>;
+  tripOffsets: Map<string, Uint32Array>;
+  stopOffsets: Map<string, Map<string, Uint32Array>>;
 } {
   const dict: string[] = [];
   const dictIdx = new Map<string, number>();
@@ -42,7 +37,9 @@ function buildTestTemplate(
   const indexEntries: number[][] = [];
   let indexSize = 0;
   for (const st of stations) {
-    const e: number[] = [st.slug.length, ...st.slug.split('').map(c => c.charCodeAt(0)), 0, 0, 0, 0];
+    const e: number[] = [st.slug.length];
+    for (let i = 0; i < st.slug.length; i++) e.push(st.slug.charCodeAt(i));
+    e.push(0, 0, 0, 0);
     indexSize += e.length;
     indexEntries.push(e);
   }
@@ -59,45 +56,61 @@ function buildTestTemplate(
   for (let i = 0; i < stations.length; i++) {
     const e = indexEntries[i];
     const do_ = dataOffsets[i];
-    idx.push(...e.slice(0, e.length - 4), do_ & 0xFF, (do_ >>> 8) & 0xFF, (do_ >>> 16) & 0xFF, (do_ >>> 24) & 0xFF);
+    for (let j = 0; j < e.length - 4; j++) idx.push(e[j]);
+    idx.push(do_ & 0xFF, (do_ >>> 8) & 0xFF, (do_ >>> 16) & 0xFF, (do_ >>> 24) & 0xFF);
   }
 
   const data: number[] = [];
-  const offsetMap = new Map<string, number[]>();
-  const stopOffsetMap = new Map<string, number[]>();
+  const tripOffsetsRaw = new Map<string, number[]>();
+  const stopOffsetsRaw = new Map<string, Map<string, number[]>>();
+
   for (let i = 0; i < stations.length; i++) {
     const st = stations[i];
     data.push(st.arrivals.length & 0xFF, (st.arrivals.length >>> 8) & 0xFF);
     for (let j = 0; j < st.arrivals.length; j++) {
       const a = st.arrivals[j];
-      const statusByteOffset = dataOffsets[i] + 2 + j * 5 + 4;
+      const statusOff = dataOffsets[i] + 2 + j * 5 + 4;
       data.push(getIdx(a.route), a.dir.charCodeAt(0), a.monoMins & 0xFF, (a.monoMins >>> 8) & 0xFF, 0);
-      let arr = offsetMap.get(a.tripId);
-      if (!arr) { arr = []; offsetMap.set(a.tripId, arr); }
-      arr.push(statusByteOffset);
-      if (a.stopKey !== undefined) {
-        let sarr = stopOffsetMap.get(a.stopKey);
-        if (!sarr) { sarr = []; stopOffsetMap.set(a.stopKey, sarr); }
-        sarr.push(statusByteOffset);
+
+      let tarr = tripOffsetsRaw.get(a.tripId);
+      if (!tarr) { tarr = []; tripOffsetsRaw.set(a.tripId, tarr); }
+      tarr.push(statusOff);
+
+      if (a.stopId !== undefined) {
+        let outer = stopOffsetsRaw.get(a.tripId);
+        if (!outer) { outer = new Map(); stopOffsetsRaw.set(a.tripId, outer); }
+        let sarr = outer.get(a.stopId);
+        if (!sarr) { sarr = []; outer.set(a.stopId, sarr); }
+        sarr.push(statusOff);
       }
     }
   }
 
+  const tripOffsets = new Map<string, Uint32Array>();
+  for (const [k, v] of tripOffsetsRaw) tripOffsets.set(k, new Uint32Array(v));
+
+  const stopOffsets = new Map<string, Map<string, Uint32Array>>();
+  for (const [tid, inner] of stopOffsetsRaw) {
+    const m = new Map<string, Uint32Array>();
+    for (const [sid, v] of inner) m.set(sid, new Uint32Array(v));
+    stopOffsets.set(tid, m);
+  }
+
   const template = new Uint8Array([...hdr, ...idx, ...data]);
-  return { template, offsets: offsetMap, stopOffsets: stopOffsetMap };
+  return { template, tripOffsets, stopOffsets };
 }
 
-const BASE_MIDNIGHT = 1700000000;
+const BASE = 1700000000;
 
 describe("patchLiveWith", () => {
-  it("zero live map — only generated_at changes", () => {
-    const { template, offsets, stopOffsets } = buildTestTemplate(BASE_MIDNIGHT, [{
+  it("zero live maps — only generated_at changes", () => {
+    const { template, tripOffsets, stopOffsets } = buildTestTemplate(BASE, [{
       slug: "a",
       arrivals: [{ route: "A", dir: "N", monoMins: 100, tripId: "trip-noop" }],
     }]);
     const out = new Uint8Array(template.length);
     const before = Date.now();
-    const result = patchLiveWith(out, template, offsets, stopOffsets, new Map(), new Map());
+    const result = patchLiveWith(out, template, tripOffsets, stopOffsets, new Map(), new Map());
     const after = Date.now();
 
     const genAt = (result[0] | (result[1] << 8) | (result[2] << 16) | (result[3] << 24)) >>> 0;
@@ -111,124 +124,110 @@ describe("patchLiveWith", () => {
 
   it("cancelled trip (rel=3) → status byte = 128", () => {
     const tripId = "trip-cancelled";
-    const { template, offsets, stopOffsets } = buildTestTemplate(BASE_MIDNIGHT, [{
+    const { template, tripOffsets, stopOffsets } = buildTestTemplate(BASE, [{
       slug: "b",
       arrivals: [{ route: "B", dir: "S", monoMins: 200, tripId }],
     }]);
     const out = new Uint8Array(template.length);
-    const result = patchLiveWith(out, template, offsets, stopOffsets, new Map([[tripId, 3]]), new Map());
-    const statusOff = offsets.get(tripId)![0];
-    expect(result[statusOff]).toBe(128);
+    const result = patchLiveWith(out, template, tripOffsets, stopOffsets, new Map([[tripId, 3]]), new Map());
+    expect(result[tripOffsets.get(tripId)![0]]).toBe(128);
   });
 
   it("skipped trip (rel=4) → status byte = 129", () => {
     const tripId = "trip-skipped";
-    const { template, offsets, stopOffsets } = buildTestTemplate(BASE_MIDNIGHT, [{
+    const { template, tripOffsets, stopOffsets } = buildTestTemplate(BASE, [{
       slug: "c",
       arrivals: [{ route: "L", dir: "N", monoMins: 300, tripId }],
     }]);
     const out = new Uint8Array(template.length);
-    const result = patchLiveWith(out, template, offsets, stopOffsets, new Map([[tripId, 4]]), new Map());
-    expect(result[offsets.get(tripId)![0]]).toBe(129);
+    const result = patchLiveWith(out, template, tripOffsets, stopOffsets, new Map([[tripId, 4]]), new Map());
+    expect(result[tripOffsets.get(tripId)![0]]).toBe(129);
   });
 
-  it("live trip (rel=0) → status byte unchanged (0)", () => {
+  it("on-time trip (rel=0) → status byte unchanged (0)", () => {
     const tripId = "trip-ontime";
-    const { template, offsets, stopOffsets } = buildTestTemplate(BASE_MIDNIGHT, [{
+    const { template, tripOffsets, stopOffsets } = buildTestTemplate(BASE, [{
       slug: "d",
       arrivals: [{ route: "R", dir: "W", monoMins: 400, tripId }],
     }]);
     const out = new Uint8Array(template.length);
-    const result = patchLiveWith(out, template, offsets, stopOffsets, new Map([[tripId, 0]]), new Map());
-    expect(result[offsets.get(tripId)![0]]).toBe(0);
+    const result = patchLiveWith(out, template, tripOffsets, stopOffsets, new Map([[tripId, 0]]), new Map());
+    expect(result[tripOffsets.get(tripId)![0]]).toBe(0);
   });
 
   it("tripId not in offsets → no-op", () => {
-    const { template, offsets, stopOffsets } = buildTestTemplate(BASE_MIDNIGHT, [{
+    const { template, tripOffsets, stopOffsets } = buildTestTemplate(BASE, [{
       slug: "e",
       arrivals: [{ route: "A", dir: "N", monoMins: 100, tripId: "trip-in-template" }],
     }]);
     const out = new Uint8Array(template.length);
-    const result = patchLiveWith(out, template, offsets, stopOffsets, new Map([["trip-not-in-template", 3]]), new Map());
+    const result = patchLiveWith(out, template, tripOffsets, stopOffsets, new Map([["trip-not-in-template", 3]]), new Map());
     for (let i = 4; i < result.length; i++) expect(result[i]).toBe(template[i]);
   });
 
   it("multi-stop trip patches all occurrences", () => {
     const tripId = "trip-multi";
-    const { template, offsets, stopOffsets } = buildTestTemplate(BASE_MIDNIGHT, [
+    const { template, tripOffsets, stopOffsets } = buildTestTemplate(BASE, [
       { slug: "s1", arrivals: [{ route: "W", dir: "N", monoMins: 100, tripId }] },
       { slug: "s2", arrivals: [{ route: "W", dir: "N", monoMins: 110, tripId }] },
     ]);
     const out = new Uint8Array(template.length);
-    const result = patchLiveWith(out, template, offsets, stopOffsets, new Map([[tripId, 3]]), new Map());
-    const offs = offsets.get(tripId)!;
+    const result = patchLiveWith(out, template, tripOffsets, stopOffsets, new Map([[tripId, 3]]), new Map());
+    const offs = tripOffsets.get(tripId)!;
     expect(offs.length).toBe(2);
     expect(result[offs[0]]).toBe(128);
     expect(result[offs[1]]).toBe(128);
   });
 
-  it("per-stop delay override writes status even without trip-level on-time", () => {
+  it("per-stop delay override patches status byte", () => {
     const tripId = "trip1";
-    const stopKey = "trip1:stopA";
-    const { template, offsets, stopOffsets } = buildTestTemplate(BASE_MIDNIGHT, [{
+    const stopId = "stopA";
+    const { template, tripOffsets, stopOffsets } = buildTestTemplate(BASE, [{
       slug: "f",
-      arrivals: [{ route: "D", dir: "N", monoMins: 500, tripId, stopKey }],
+      arrivals: [{ route: "D", dir: "N", monoMins: 500, tripId, stopId }],
     }]);
     const out = new Uint8Array(template.length);
-    const result = patchLiveWith(
-      out, template, offsets, stopOffsets,
-      new Map([[tripId, 0]]),
-      new Map([[stopKey, 3]]),  // 3 = delayed 3 min
-    );
-    const statusOff = offsets.get(tripId)![0];
-    expect(result[statusOff]).toBe(3);
+    const stopOverrides = new Map([[tripId, new Map([[stopId, 3]])]]);
+    const result = patchLiveWith(out, template, tripOffsets, stopOffsets, new Map([[tripId, 0]]), stopOverrides);
+    expect(result[tripOffsets.get(tripId)![0]]).toBe(3);
   });
 
-  it("per-stop early: -4 min → status byte 0xFC (= -4 as s8)", () => {
+  it("per-stop early: -4 min → status byte 0xFC", () => {
     const tripId = "trip2";
-    const stopKey = "trip2:stopB";
-    const { template, offsets, stopOffsets } = buildTestTemplate(BASE_MIDNIGHT, [{
+    const stopId = "stopB";
+    const { template, tripOffsets, stopOffsets } = buildTestTemplate(BASE, [{
       slug: "g",
-      arrivals: [{ route: "E", dir: "S", monoMins: 600, tripId, stopKey }],
+      arrivals: [{ route: "E", dir: "S", monoMins: 600, tripId, stopId }],
     }]);
     const out = new Uint8Array(template.length);
-    const result = patchLiveWith(
-      out, template, offsets, stopOffsets,
-      new Map([[tripId, 0]]),
-      new Map([[stopKey, (-4) & 0xff]]),
-    );
-    expect(result[offsets.get(tripId)![0]]).toBe(0xFC);
+    const stopOverrides = new Map([[tripId, new Map([[stopId, (-4) & 0xff]])]]);
+    const result = patchLiveWith(out, template, tripOffsets, stopOffsets, new Map([[tripId, 0]]), stopOverrides);
+    expect(result[tripOffsets.get(tripId)![0]]).toBe(0xFC);
   });
 
   it("per-stop skipped (stopRel=1) → status byte 129", () => {
     const tripId = "trip3";
-    const stopKey = "trip3:stopC";
-    const { template, offsets, stopOffsets } = buildTestTemplate(BASE_MIDNIGHT, [{
+    const stopId = "stopC";
+    const { template, tripOffsets, stopOffsets } = buildTestTemplate(BASE, [{
       slug: "h",
-      arrivals: [{ route: "W", dir: "N", monoMins: 700, tripId, stopKey }],
+      arrivals: [{ route: "W", dir: "N", monoMins: 700, tripId, stopId }],
     }]);
     const out = new Uint8Array(template.length);
-    const result = patchLiveWith(
-      out, template, offsets, stopOffsets,
-      new Map([[tripId, 0]]),
-      new Map([[stopKey, 129]]),
-    );
-    expect(result[offsets.get(tripId)![0]]).toBe(129);
+    const stopOverrides = new Map([[tripId, new Map([[stopId, 129]])]]);
+    const result = patchLiveWith(out, template, tripOffsets, stopOffsets, new Map([[tripId, 0]]), stopOverrides);
+    expect(result[tripOffsets.get(tripId)![0]]).toBe(129);
   });
 
   it("stop override without trip-level entry — stop still patches", () => {
     const tripId = "trip4";
-    const stopKey = "trip4:stopD";
-    const { template, offsets, stopOffsets } = buildTestTemplate(BASE_MIDNIGHT, [{
+    const stopId = "stopD";
+    const { template, tripOffsets, stopOffsets } = buildTestTemplate(BASE, [{
       slug: "i",
-      arrivals: [{ route: "R", dir: "E", monoMins: 800, tripId, stopKey }],
+      arrivals: [{ route: "R", dir: "E", monoMins: 800, tripId, stopId }],
     }]);
     const out = new Uint8Array(template.length);
-    const result = patchLiveWith(
-      out, template, offsets, stopOffsets,
-      new Map(),
-      new Map([[stopKey, 5]]),
-    );
-    expect(result[offsets.get(tripId)![0]]).toBe(5);
+    const stopOverrides = new Map([[tripId, new Map([[stopId, 5]])]]);
+    const result = patchLiveWith(out, template, tripOffsets, stopOffsets, new Map(), stopOverrides);
+    expect(result[tripOffsets.get(tripId)![0]]).toBe(5);
   });
 });

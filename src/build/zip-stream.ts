@@ -4,7 +4,7 @@ export type ChunkHandler = (chunk: Uint8Array, final: boolean) => void;
 
 /**
  * Streams a remote zip, routing decompressed file chunks to named handlers.
- * Files not in `handlers` are decompressed and discarded (still must be read to progress the stream).
+ * Files not in `handlers` are decompressed and discarded.
  */
 export async function streamZipFiles(
   url: string,
@@ -17,18 +17,17 @@ export async function streamZipFiles(
   await new Promise<void>((resolve, reject) => {
     const unzip = new Unzip((stream) => {
       const handler = handlers[stream.name];
-      // ondata MUST be set before start() — fflate throws if it's missing
       stream.ondata = handler
         ? (err, data, final) => {
             if (err) { reject(err); return; }
             handler(data, final);
           }
-        : () => {}; // discard data for unwanted files
+        : () => {};
       stream.start();
     });
 
     unzip.register(UnzipInflate);
-    unzip.register(UnzipPassThrough); // for stored (uncompressed) entries
+    unzip.register(UnzipPassThrough);
 
     const reader = resp.body!.getReader();
     const pump = async () => {

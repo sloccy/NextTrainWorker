@@ -1,4 +1,4 @@
-import { STATIONS_BYTES } from "../stations.generated.js";
+import { STATIONS_BYTES } from "../generated/stations.js";
 
 export function handleStations(): Response {
   return new Response(STATIONS_BYTES, {

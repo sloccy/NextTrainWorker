@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { CsvStreamParser } from "../gtfs/csv.js";
+import { CsvStreamParser } from "../build/csv.js";
 
 function parseAll(text: string): Record<string, string>[] {
   const parser = new CsvStreamParser();
@@ -34,10 +34,8 @@ describe("CsvStreamParser", () => {
   it("accumulates partial chunks correctly", () => {
     const parser = new CsvStreamParser();
     const enc = new TextEncoder();
-    // Feed header and half a line
     const r1 = parser.push(enc.encode("route_id,name\nA,Air"), false);
-    expect(r1).toHaveLength(0); // incomplete line — not yet emitted
-    // Complete the line
+    expect(r1).toHaveLength(0);
     const r2 = parser.push(enc.encode("port\n"), true);
     expect(r2).toEqual([{ route_id: "A", name: "Airport" }]);
   });

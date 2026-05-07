@@ -1,4 +1,4 @@
-import type { Env } from "./types.js";
+import type { Env } from "../types.js";
 
 export async function getArrivalsBin(env: Env): Promise<Uint8Array | null> {
   const obj = await env.ARRIVALS_R2.get("arrivals/current.bin");
@@ -11,5 +11,3 @@ export async function writeArrivalsBin(env: Env, buf: Uint8Array): Promise<void>
     httpMetadata: { contentType: "application/octet-stream" },
   });
 }
-
-
