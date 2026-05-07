@@ -6,8 +6,6 @@
  *   stop_time_update[].{stop_id, arrival.delay, schedule_relationship}
  */
 
-import { hashTripIdBytes, continueHashWithStopBytes } from "../binary.js";
-
 const r = {
   buf: new Uint8Array(0) as Uint8Array,
   pos: 0,
@@ -62,8 +60,8 @@ const r = {
 };
 
 export interface LiveData {
-  tripStatus: Map<number, number>;    // tripIdHash → trip-level relationship (0=SCHEDULED, 3=CANCELED, 4=SKIPPED)
-  stopOverrides: Map<number, number>; // compositeHash(trip+stop) → bucketed u8 status byte
+  tripStatus: Map<string, number>;    // tripId → trip-level relationship (0=SCHEDULED, 3=CANCELED, 4=SKIPPED)
+  stopOverrides: Map<string, number>; // "tripId:stopId" → bucketed u8 status byte
 }
 
 /** Bucket a signed delay in seconds into the wire-format s8 status byte (stored as u8). */
@@ -79,8 +77,8 @@ function bucketDelay(delaySec: number, stopRel: number): number {
 export function decodeFeedMessage(buf: Uint8Array): LiveData {
   r.buf = buf;
   r.pos = 0;
-  const tripStatus = new Map<number, number>();
-  const stopOverrides = new Map<number, number>();
+  const tripStatus = new Map<string, number>();
+  const stopOverrides = new Map<string, number>();
   const len = buf.length;
 
   while (r.pos < len) {
@@ -94,7 +92,7 @@ export function decodeFeedMessage(buf: Uint8Array): LiveData {
         if (te === 0x1a) {
           // field=3, wire=2 — TripUpdate
           const tuEnd = r.pos + r.varint();
-          let tripIdHash = 0;
+          let tripId = "";
           let tripRelationship = 0;
 
           while (r.pos < tuEnd) {
@@ -106,7 +104,8 @@ export function decodeFeedMessage(buf: Uint8Array): LiveData {
                 const td = buf[r.pos++];
                 if (td === 0x0a) {
                   const vlen = r.varint();
-                  tripIdHash = hashTripIdBytes(buf, r.pos, vlen);
+                  tripId = "";
+                  for (let j = r.pos; j < r.pos + vlen; j++) tripId += String.fromCharCode(buf[j]);
                   r.pos += vlen;
                 } else if (td === 0x20) {
                   tripRelationship = r.varint();
@@ -157,17 +156,19 @@ export function decodeFeedMessage(buf: Uint8Array): LiveData {
               }
               r.pos = stuEnd;
 
-              if (stopIdStart >= 0 && tripIdHash && (delayPresent || stopRel === 1)) {
-                const compHash = continueHashWithStopBytes(tripIdHash, buf, stopIdStart, stopIdLen);
+              if (stopIdStart >= 0 && tripId && (delayPresent || stopRel === 1)) {
+                let stopId = "";
+                for (let j = stopIdStart; j < stopIdStart + stopIdLen; j++) stopId += String.fromCharCode(buf[j]);
+                const compKey = tripId + ":" + stopId;
                 const statusByte = bucketDelay(delaySec, stopRel);
-                stopOverrides.set(compHash, statusByte);
+                stopOverrides.set(compKey, statusByte);
               }
             } else {
               r.skip(tt & 7);
             }
           }
 
-          if (tripIdHash) tripStatus.set(tripIdHash, tripRelationship);
+          if (tripId) tripStatus.set(tripId, tripRelationship);
           r.pos = tuEnd;
         } else {
           r.skip(te & 7);
