@@ -1,22 +1,9 @@
 /**
- * GTFS-RT FeedMessage decoder using protobufjs.
+ * GTFS-RT FeedMessage decoder using protobufjs/light (static codegen).
+ * No eval/codegen — safe for Cloudflare Workers.
  */
 
-import protobuf from "protobufjs";
-
-const root = protobuf.Root.fromJSON({
-  nested: {
-    FeedMessage: { fields: { header: { type: "FeedHeader", id: 1 }, entity: { rule: "repeated", type: "FeedEntity", id: 2 } } },
-    FeedHeader: { fields: { gtfsRealtimeVersion: { type: "string", id: 1 }, timestamp: { type: "uint64", id: 3 } } },
-    FeedEntity: { fields: { id: { type: "string", id: 1 }, tripUpdate: { type: "TripUpdate", id: 3 } } },
-    TripUpdate: { fields: { trip: { type: "TripDescriptor", id: 1 }, stopTimeUpdate: { rule: "repeated", type: "StopTimeUpdate", id: 2 } } },
-    TripDescriptor: { fields: { tripId: { type: "string", id: 1 }, scheduleRelationship: { type: "int32", id: 4 } } },
-    StopTimeUpdate: { fields: { arrival: { type: "StopTimeEvent", id: 2 }, departure: { type: "StopTimeEvent", id: 3 }, stopId: { type: "string", id: 4 }, scheduleRelationship: { type: "int32", id: 5 } } },
-    StopTimeEvent: { fields: { delay: { type: "int32", id: 1 }, time: { type: "int64", id: 2 } } },
-  }
-});
-
-const FeedMessage = root.lookupType("FeedMessage");
+import { transit_realtime } from "./gtfs-rt.js";
 
 export interface LiveData {
   tripStatus: Map<string, number>;
@@ -36,9 +23,9 @@ export function decodeFeedMessage(buf: Uint8Array): LiveData {
   const tripStatus = new Map<string, number>();
   const stopOverrides = new Map<string, number>();
 
-  const msg = FeedMessage.decode(buf) as any;
+  const msg = transit_realtime.FeedMessage.decode(buf);
 
-  for (const entity of msg.entity || []) {
+  for (const entity of msg.entity) {
     const tu = entity.tripUpdate;
     if (!tu?.trip?.tripId) continue;
 
@@ -56,8 +43,9 @@ export function decodeFeedMessage(buf: Uint8Array): LiveData {
       let hasData = false;
 
       if (event) {
-        if (event.delay != null) { delaySec = event.delay; hasData = true; }
+        if (event.delay != null && event.delay !== 0) { delaySec = event.delay; hasData = true; }
         else if (event.time != null) { delaySec = 0; hasData = true; }
+        else if (event.delay === 0) { delaySec = 0; hasData = true; }
       }
 
       if (hasData || stu.scheduleRelationship === 1) {
