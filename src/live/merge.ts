@@ -1,4 +1,4 @@
-import { TEMPLATE_BYTES, HASH_OFFSETS, STOP_HASH_OFFSETS } from "../template.generated.js";
+import { TEMPLATE_BYTES, TRIP_OFFSETS, STOP_OFFSETS } from "../template.generated.js";
 
 const REUSABLE_OUT = new Uint8Array(TEMPLATE_BYTES.length || 65536);
 
@@ -13,20 +13,20 @@ function sameTemplateVersion(previous: Uint8Array, template: Uint8Array): boolea
 }
 
 export function patchLive(
-  tripStatus: Map<number, number>,
-  stopOverrides: Map<number, number>,
+  tripStatus: Map<string, number>,
+  stopOverrides: Map<string, number>,
   previous?: Uint8Array | null,
 ): Uint8Array {
-  return patchLiveWith(REUSABLE_OUT, TEMPLATE_BYTES, HASH_OFFSETS, STOP_HASH_OFFSETS, tripStatus, stopOverrides, previous);
+  return patchLiveWith(REUSABLE_OUT, TEMPLATE_BYTES, TRIP_OFFSETS, STOP_OFFSETS, tripStatus, stopOverrides, previous);
 }
 
 export function patchLiveWith(
   out: Uint8Array,
   template: Uint8Array,
-  tripOffsets: Map<number, number[]>,
-  stopOffsets: Map<number, number[]>,
-  tripStatus: Map<number, number>,
-  stopOverrides: Map<number, number>,
+  tripOffsets: Map<string, number[]>,
+  stopOffsets: Map<string, number[]>,
+  tripStatus: Map<string, number>,
+  stopOverrides: Map<string, number>,
   previous?: Uint8Array | null,
 ): Uint8Array {
   if (previous && sameTemplateVersion(previous, template)) {
@@ -41,17 +41,17 @@ export function patchLiveWith(
   out[3] = (now >>> 24) & 0xFF;
 
   // Pass 1 — trip-level: only mark cancelled/skipped trips.
-  for (const [hash, rel] of tripStatus) {
+  for (const [key, rel] of tripStatus) {
     if (rel !== 3 && rel !== 4) continue;
-    const offs = tripOffsets.get(hash);
+    const offs = tripOffsets.get(key);
     if (offs === undefined) continue;
     const status = rel === 3 ? 128 : 129;
     for (const o of offs) out[o] = status;
   }
 
   // Pass 2 — per-stop override: refine with actual delay buckets where available.
-  for (const [compHash, statusByte] of stopOverrides) {
-    const offs = stopOffsets.get(compHash);
+  for (const [compKey, statusByte] of stopOverrides) {
+    const offs = stopOffsets.get(compKey);
     if (offs === undefined) continue;
     for (const o of offs) out[o] = statusByte;
   }
