@@ -50,7 +50,7 @@ export function patchLiveWith(
   out[3] = (now >>> 24) & 0xFF;
 
   for (const [tripId, rel] of tripStatus) {
-    if (rel !== 3 && rel !== 4) continue;
+    if (rel !== 3) continue;
     const offs = tripOffsets.get(tripId);
     if (!offs) continue;
     const status = rel === 3 ? 128 : 129;
