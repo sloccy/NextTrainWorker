@@ -9,8 +9,8 @@ export function w32(buf: number[], v: number): void {
   buf.push(v & 0xFF, (v >>> 8) & 0xFF, (v >>> 16) & 0xFF, (v >>> 24) & 0xFF);
 }
 export function wLpStr(buf: number[], s: string, maxLen: number): void {
-  const t = s.slice(0, maxLen);
-  buf.push(Math.min(t.length, 255));
+  const t = s.length > maxLen ? s.slice(0, maxLen) : s;
+  buf.push(t.length);
   for (let i = 0; i < t.length; i++) buf.push(t.charCodeAt(i) & 0xFF);
 }
 

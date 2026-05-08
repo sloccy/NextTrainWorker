@@ -53,7 +53,7 @@ export function scanArrivalsBin(
   pos = dataOffset;
   const count = bin[pos++] | (bin[pos++] << 8);
 
-  type Entry = { routeIdx: number; dirCode: number; predictedMins: number; delayStatus: number };
+  type Entry = { dOff: number; dLen: number; dirCode: number; predictedMins: number; delayStatus: number };
   const entries: Entry[] = [];
 
   for (let i = 0; i < count; i++) {
@@ -71,13 +71,13 @@ export function scanArrivalsBin(
 
     if (monoMins + delayMins < cutoffMonoMins) continue;
 
+    const dOff = dictOffsets[routeIdx];
+    const dLen = bin[dOff - 1];
     const dirChar = String.fromCharCode(dirCode);
     let pairMatch = false;
     for (let j = 0; j < pairs.length; j++) {
       const p = pairs[j];
       if (p.dir !== dirChar) continue;
-      const dOff = dictOffsets[routeIdx];
-      const dLen = bin[dOff - 1];
       if (dLen !== p.route.length) continue;
       let match = true;
       for (let k = 0; k < dLen; k++) {
@@ -87,25 +87,26 @@ export function scanArrivalsBin(
     }
     if (!pairMatch) continue;
 
-    entries.push({ routeIdx, dirCode, predictedMins: monoMins + delayMins, delayStatus });
+    entries.push({ dOff, dLen, dirCode, predictedMins: monoMins + delayMins, delayStatus });
   }
 
   entries.sort((a, b) => a.predictedMins - b.predictedMins);
 
-  const out: number[] = [];
   const outCount = Math.min(entries.length, 10);
+  let outBytes = 1;
+  for (let i = 0; i < outCount; i++) outBytes += 4 + entries[i].dLen;
+  const res = new Uint8Array(outBytes);
+  let wp = 0;
+  res[wp++] = outCount;
   for (let i = 0; i < outCount; i++) {
-    const { routeIdx, dirCode, predictedMins, delayStatus } = entries[i];
-    const dOff = dictOffsets[routeIdx];
-    const dLen = bin[dOff - 1];
+    const { dOff, dLen, dirCode, predictedMins, delayStatus } = entries[i];
     const timeMins = predictedMins % 1440;
-    out.push(dLen);
-    for (let k = 0; k < dLen; k++) out.push(bin[dOff + k]);
-    out.push(dirCode, (timeMins >>> 8) & 0xFF, timeMins & 0xFF, delayStatus);
+    res[wp++] = dLen;
+    for (let k = 0; k < dLen; k++) res[wp++] = bin[dOff + k];
+    res[wp++] = dirCode;
+    res[wp++] = (timeMins >>> 8) & 0xFF;
+    res[wp++] = timeMins & 0xFF;
+    res[wp++] = delayStatus;
   }
-
-  const res = new Uint8Array(out.length + 1);
-  res[0] = outCount;
-  for (let i = 0; i < out.length; i++) res[i + 1] = out[i];
   return { buf: res, generatedAt };
 }
