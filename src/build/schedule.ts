@@ -112,7 +112,8 @@ export async function buildSchedule(): Promise<BuiltSchedule> {
   }
 
   const stationArrivals = new Map<string, Array<{
-    route: string; dir: string; monoMins: number; tripId: string; stopId: string; e: number;
+    route: string; dir: string; monoMins: number; tripId: string; stopId: string;
+    aliasStopIds: string[]; e: number;
   }>>();
   const stopToSlug = new Map<string, string>();
 
@@ -128,26 +129,44 @@ export async function buildSchedule(): Promise<BuiltSchedule> {
     const stopTimes = tripStopTimes.get(tripId);
     if (!stopTimes) continue;
 
+    // Sort by stop_sequence so first occurrence per slug is deterministic.
+    const sorted = [...stopTimes].sort((a, b) => a.stop_sequence - b.stop_sequence);
+
     for (const { midnightUTC, svcIds } of activeSvcByDay) {
       if (!svcIds.has(trip.service_id)) continue;
-      for (const st of stopTimes) {
+
+      // Per (trip, day): track the emitted entry for each slug so aliases can be registered.
+      const slugEntry = new Map<string, { aliasStopIds: string[] }>();
+
+      for (const st of sorted) {
+        const slug = stopToSlug.get(st.stop_id);
+        if (!slug) continue;
+
         const scheduledUnix = midnightUTC + st.time_seconds;
         if (scheduledUnix * 1000 < now - 5 * 60_000 || scheduledUnix * 1000 > windowEnd) continue;
 
-        const slug = stopToSlug.get(st.stop_id);
-        if (!slug) continue;
+        const existing = slugEntry.get(slug);
+        if (existing) {
+          // Earlier stop_sequence already emitted an entry for this slug.
+          // Register this stop_id as an alias so RT updates to it patch the same byte.
+          existing.aliasStopIds.push(st.stop_id);
+          continue;
+        }
 
         let list = stationArrivals.get(slug);
         if (!list) { list = []; stationArrivals.set(slug, list); }
 
-        list.push({
+        const entry = {
           route: routeShortName.get(trip.route_id)!,
           dir,
           monoMins: Math.floor((scheduledUnix - baseMidnightUTC) / 60),
           tripId,
           stopId: st.stop_id,
+          aliasStopIds: [] as string[],
           e: scheduledUnix,
-        });
+        };
+        list.push(entry);
+        slugEntry.set(slug, entry);
       }
     }
   }
@@ -155,12 +174,15 @@ export async function buildSchedule(): Promise<BuiltSchedule> {
   const slugs = [...stationArrivals.keys()].sort();
   const dict = new Dictionary();
 
-  const tDataBlocks: Array<{ bytes: number[]; entryTripIds: string[]; entryStopIds: string[] }> = [];
+  const tDataBlocks: Array<{
+    bytes: number[]; entryTripIds: string[]; entryStopIds: string[]; entryAliasStopIds: string[][];
+  }> = [];
   for (const slug of slugs) {
     const arrivals = stationArrivals.get(slug)!.sort((a, b) => a.e - b.e);
     const bytes: number[] = [];
     const entryTripIds: string[] = [];
     const entryStopIds: string[] = [];
+    const entryAliasStopIds: string[][] = [];
     w16(bytes, arrivals.length);
     for (const a of arrivals) {
       w8(bytes, dict.get(a.route));
@@ -169,8 +191,9 @@ export async function buildSchedule(): Promise<BuiltSchedule> {
       w8(bytes, 0);
       entryTripIds.push(a.tripId);
       entryStopIds.push(a.stopId);
+      entryAliasStopIds.push(a.aliasStopIds);
     }
-    tDataBlocks.push({ bytes, entryTripIds, entryStopIds });
+    tDataBlocks.push({ bytes, entryTripIds, entryStopIds, entryAliasStopIds });
   }
 
   const generatedAt = Math.floor(now / 1000);
@@ -202,11 +225,10 @@ export async function buildSchedule(): Promise<BuiltSchedule> {
   const stopOffsets = new Map<string, Map<string, number[]>>();
   let tBlockBase = tResult.length;
   for (let i = 0; i < slugs.length; i++) {
-    const { bytes, entryTripIds, entryStopIds } = tDataBlocks[i];
+    const { bytes, entryTripIds, entryStopIds, entryAliasStopIds } = tDataBlocks[i];
     for (let j = 0; j < entryTripIds.length; j++) {
       const statusOff = tBlockBase + 2 + j * 5 + 4;
       const tripId = entryTripIds[j];
-      const stopId = entryStopIds[j];
 
       let tarr = tripOffsets.get(tripId);
       if (!tarr) { tarr = []; tripOffsets.set(tripId, tarr); }
@@ -214,9 +236,11 @@ export async function buildSchedule(): Promise<BuiltSchedule> {
 
       let outer = stopOffsets.get(tripId);
       if (!outer) { outer = new Map(); stopOffsets.set(tripId, outer); }
-      let sarr = outer.get(stopId);
-      if (!sarr) { sarr = []; outer.set(stopId, sarr); }
-      sarr.push(statusOff);
+      for (const sid of [entryStopIds[j], ...entryAliasStopIds[j]]) {
+        let sarr = outer.get(sid);
+        if (!sarr) { sarr = []; outer.set(sid, sarr); }
+        sarr.push(statusOff);
+      }
     }
     tResult.push(...bytes);
     tBlockBase += bytes.length;
