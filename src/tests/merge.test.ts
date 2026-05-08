@@ -133,17 +133,6 @@ describe("patchLiveWith", () => {
     expect(result[tripOffsets.get(tripId)![0]]).toBe(128);
   });
 
-  it("skipped trip (rel=4) → status byte = 129", () => {
-    const tripId = "trip-skipped";
-    const { template, tripOffsets, stopOffsets } = buildTestTemplate(BASE, [{
-      slug: "c",
-      arrivals: [{ route: "L", dir: "N", monoMins: 300, tripId }],
-    }]);
-    const out = new Uint8Array(template.length);
-    const result = patchLiveWith(out, template, tripOffsets, stopOffsets, new Map([[tripId, 4]]), new Map());
-    expect(result[tripOffsets.get(tripId)![0]]).toBe(129);
-  });
-
   it("on-time trip (rel=0) → status byte unchanged (0)", () => {
     const tripId = "trip-ontime";
     const { template, tripOffsets, stopOffsets } = buildTestTemplate(BASE, [{

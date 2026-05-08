@@ -2,12 +2,29 @@
  * pbf-based GTFS-RT decoder. Only reads the fields we need; skips everything else.
  * Uses module-scope state to avoid per-stop object allocation on the hot path.
  *
- * Validated against protobufjs/static on a live RTD feed: 0 mismatches across
- * 509 trips and 10,666 stop overrides.
+ * RTD populates StopTimeEvent.time (absolute Unix timestamp) rather than .delay.
+ * We derive delaySec = liveTime - scheduledEpoch, looking up scheduledEpoch from
+ * the bundled TEMPLATE_BYTES via STOP_OFFSETS.
  */
 import Pbf from "pbf";
-import { TRIP_OFFSETS } from "../generated/offsets.js";
+import { TEMPLATE_BYTES, TRIP_OFFSETS, STOP_OFFSETS } from "../generated/offsets.js";
 import { TRIP_HASH, STOP_HASH, fnv1a } from "./key-hash.js";
+
+const BASE_MIDNIGHT_UTC =
+  (TEMPLATE_BYTES[4]
+  | (TEMPLATE_BYTES[5] << 8)
+  | (TEMPLATE_BYTES[6] << 16)
+  | (TEMPLATE_BYTES[7] << 24)) >>> 0;
+
+function stopSchedSec(tripId: string, stopId: string): number {
+  const inner = STOP_OFFSETS.get(tripId);
+  if (!inner) return 0;
+  const offs = inner.get(stopId);
+  if (!offs || offs.length === 0) return 0;
+  const off = offs[0];
+  const monoMins = TEMPLATE_BYTES[off - 2] | (TEMPLATE_BYTES[off - 1] << 8);
+  return BASE_MIDNIGHT_UTC + monoMins * 60;
+}
 
 export interface LiveData {
   tripStatus: Map<string, number>;
@@ -28,12 +45,14 @@ let _schedRel = 0;
 let _hasEv = false;
 let _evDelay = 0;
 let _evHasData = false;
+let _evTime = 0;
+let _evHasTime = false;
 
 // ── leaf readers ─────────────────────────────────────────────────────────────
 
 function readSTE(tag: number, _: null, pbf: Pbf): void {
   if (tag === 1) { _evDelay = pbf.readVarint(true); _evHasData = true; }
-  else if (tag === 2) { pbf.skip(0); _evHasData = true; }
+  else if (tag === 2) { _evTime = pbf.readVarint(true); _evHasTime = true; _evHasData = true; }
 }
 
 function readSTU(tag: number, _: null, pbf: Pbf): void {
@@ -47,7 +66,7 @@ function readSTU(tag: number, _: null, pbf: Pbf): void {
     _schedRel = pbf.readVarint(true);
   } else if (tag === 2 || tag === 3) {
     if (_hasEv) { pbf.readMessage(noop, null); return; }
-    _evDelay = 0; _evHasData = false;
+    _evDelay = 0; _evHasData = false; _evTime = 0; _evHasTime = false;
     pbf.readMessage(readSTE, null);
     if (_evHasData) _hasEv = true;
   }
@@ -79,13 +98,17 @@ function readTU(tag: number, _: null, pbf: Pbf): void {
       if (!_curOuter) { _curOuter = new Map(); _so.set(_tripId, _curOuter); }
     }
     _stopId = ""; _schedRel = 0; _hasEv = false;
-    _evDelay = 0; _evHasData = false;
+    _evDelay = 0; _evHasData = false; _evTime = 0; _evHasTime = false;
     pbf.readMessage(readSTU, null);
     if (!_stopId) return;
     let useIt = false;
     let delaySec = 0;
     if (_hasEv) {
       if (_evDelay !== 0) { delaySec = _evDelay; useIt = true; }
+      else if (_evHasTime) {
+        const sched = stopSchedSec(_tripId, _stopId);
+        if (sched > 0) { delaySec = _evTime - sched; useIt = true; }
+      }
       else if (_evHasData) { delaySec = 0; useIt = true; }
     }
     if (useIt || _schedRel === 1) {
