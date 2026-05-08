@@ -1,0 +1,27 @@
+name: PR CI
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Stub generated files
+        run: |
+          mkdir -p src/worker/generated
+          printf 'export const TEMPLATE_BYTES = new Uint8Array();\nexport const TRIP_OFFSETS = new Uint8Array();\nexport const STOP_OFFSETS = new Uint8Array();\n' > src/worker/generated/offsets.ts
+          printf 'export const STATIONS_BYTES = new Uint8Array();\n' > src/worker/generated/stations.ts
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test

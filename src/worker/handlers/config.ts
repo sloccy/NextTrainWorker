@@ -1,5 +1,4 @@
-export function handleConfig(request: Request): Response {
-  const html = `<!DOCTYPE html>
+const HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -78,7 +77,8 @@ export function handleConfig(request: Request): Response {
 </body>
 </html>`;
 
-  return new Response(html, {
+export function handleConfig(): Response {
+  return new Response(HTML, {
     headers: { "Content-Type": "text/html; charset=utf-8" },
   });
 }

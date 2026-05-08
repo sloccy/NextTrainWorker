@@ -1,0 +1,40 @@
+name: Dependabot auto-merge
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  ci:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Stub generated files
+        run: |
+          mkdir -p src/worker/generated
+          printf 'export const TEMPLATE_BYTES = new Uint8Array();\nexport const TRIP_OFFSETS = new Uint8Array();\nexport const STOP_OFFSETS = new Uint8Array();\n' > src/worker/generated/offsets.ts
+          printf 'export const STATIONS_BYTES = new Uint8Array();\n' > src/worker/generated/stations.ts
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+
+  merge:
+    needs: ci
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Squash-merge Dependabot PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --squash --delete-branch "$PR_URL"
