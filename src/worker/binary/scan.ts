@@ -73,11 +73,10 @@ export function scanArrivalsBin(
 
     const dOff = dictOffsets[routeIdx];
     const dLen = bin[dOff - 1];
-    const dirChar = String.fromCharCode(dirCode);
     let pairMatch = false;
     for (let j = 0; j < pairs.length; j++) {
       const p = pairs[j];
-      if (p.dir !== dirChar) continue;
+      if (p.dir.charCodeAt(0) !== dirCode) continue;
       if (dLen !== p.route.length) continue;
       let match = true;
       for (let k = 0; k < dLen; k++) {

@@ -5,9 +5,7 @@ import { join } from "node:path";
 const GENERATED_DIR = "src/worker/generated";
 
 function b64(bytes: Uint8Array): string {
-  let bin = "";
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  return Buffer.from(bin, "binary").toString("base64");
+  return Buffer.from(bytes).toString("base64");
 }
 
 function emitOffsets(
