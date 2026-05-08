@@ -60,7 +60,7 @@ function readTD(tag: number, _: null, pbf: Pbf): void {
     const h = fnv1a(pbf.buf as Uint8Array, s, s + len);
     pbf.pos = s + len;
     _tripId = TRIP_HASH.get(h) ?? "";
-  } else if (tag === 4) _ts.set(_tripId || "?", pbf.readVarint(true));
+  } else if (tag === 4) _ts.set(_tripId, pbf.readVarint(true));
 }
 
 function readTU(tag: number, _: null, pbf: Pbf): void {
