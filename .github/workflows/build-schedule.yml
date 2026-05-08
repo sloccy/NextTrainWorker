@@ -2,7 +2,7 @@ name: Build GTFS Schedule
 
 on:
   schedule:
-    - cron: '0 4,16 * * *'  # 4am + 4pm UTC daily; baseline window is 24h (12h overlap)
+    - cron: '0 6,18 * * *'  # 6am + 6pm UTC = midnight + noon MDT (±1h in winter)
   workflow_dispatch:
 
 jobs:
