@@ -55,26 +55,37 @@ export class CsvStreamParser {
 function parseCsvLine(line: string): string[] {
   const fields: string[] = [];
   let i = 0;
-  while (i <= line.length) {
-    if (i === line.length) { fields.push(""); break; }
+  while (i < line.length) {
     if (line[i] === '"') {
       let j = i + 1;
-      let field = "";
-      while (j < line.length) {
-        if (line[j] === '"') {
-          if (line[j + 1] === '"') { field += '"'; j += 2; continue; }
-          j++; break;
+      // Fast path: no embedded escaped quotes — find closing quote directly
+      const close = line.indexOf('"', j);
+      if (close === -1 || line[close + 1] !== '"') {
+        fields.push(close === -1 ? line.slice(j) : line.slice(j, close));
+        i = close === -1 ? line.length : close + 1;
+      } else {
+        // Slow path: has "" escape sequences
+        let field = "";
+        let segStart = j;
+        while (j < line.length) {
+          if (line[j] === '"') {
+            field += line.slice(segStart, j);
+            if (line[j + 1] === '"') { field += '"'; j += 2; segStart = j; continue; }
+            j++; break;
+          }
+          j++;
         }
-        field += line[j++];
+        field += line.slice(segStart, j - 1);
+        fields.push(field);
+        i = j;
       }
-      fields.push(field);
-      i = j;
-      if (line[i] === ",") i++;
+      if (i < line.length && line[i] === ",") i++;
     } else {
       const comma = line.indexOf(",", i);
       if (comma === -1) { fields.push(line.slice(i)); break; }
       fields.push(line.slice(i, comma));
       i = comma + 1;
+      if (i === line.length) { fields.push(""); break; } // trailing comma → empty field
     }
   }
   return fields;

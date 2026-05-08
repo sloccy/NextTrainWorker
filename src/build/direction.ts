@@ -2,6 +2,13 @@ import type { Direction } from "../types.js";
 
 interface LatLon { lat: number; lon: number }
 
+const HINT_PATTERNS: ReadonlyArray<[RegExp, Direction]> = [
+  [/\bnorth\b/, "N"], [/\bnorthbound\b/, "N"],
+  [/\bsouth\b/, "S"], [/\bsouthbound\b/, "S"],
+  [/\beast\b/, "E"], [/\beastbound\b/, "E"],
+  [/\bwest\b/, "W"], [/\bwestbound\b/, "W"],
+];
+
 function bearing(a: LatLon, b: LatLon): number {
   const lat1 = (a.lat * Math.PI) / 180;
   const lat2 = (b.lat * Math.PI) / 180;
@@ -43,17 +50,9 @@ export function inferDirections(
     seen.add(key);
 
     const h = trip.headsign.toLowerCase();
-    const hintMap: Record<string, Direction> = {
-      "\\bnorth\\b": "N", "\\bnorthbound\\b": "N",
-      "\\bsouth\\b": "S", "\\bsouthbound\\b": "S",
-      "\\beast\\b": "E", "\\beastbound\\b": "E",
-      "\\bwest\\b": "W", "\\bwestbound\\b": "W",
-    };
-    for (const [pattern, hintDir] of Object.entries(hintMap)) {
-      if (new RegExp(pattern).test(h) && hintDir !== dir) {
-        console.warn(
-          `[direction] ${key} headsign "${trip.headsign}" suggests ${hintDir} but geometry says ${dir}`,
-        );
+    for (const [re, hintDir] of HINT_PATTERNS) {
+      if (re.test(h) && hintDir !== dir) {
+        console.warn(`[direction] ${key} headsign "${trip.headsign}" suggests ${hintDir} but geometry says ${dir}`);
         break;
       }
     }
