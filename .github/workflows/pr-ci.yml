@@ -20,8 +20,12 @@ jobs:
       - name: Stub generated files
         run: |
           mkdir -p src/worker/generated
-          printf 'export const TEMPLATE_BYTES = new Uint8Array();\nexport const TRIP_OFFSETS = new Uint8Array();\nexport const STOP_OFFSETS = new Uint8Array();\n' > src/worker/generated/offsets.ts
-          printf 'export const STATIONS_BYTES = new Uint8Array();\n' > src/worker/generated/stations.ts
+          cat > src/worker/generated/offsets.ts << 'EOF'
+          export const TEMPLATE_BYTES: Uint8Array = new Uint8Array();
+          export const TRIP_OFFSETS: ReadonlyMap<string, Uint32Array> = new Map<string, Uint32Array>();
+          export const STOP_OFFSETS: ReadonlyMap<string, ReadonlyMap<string, Uint32Array>> = new Map<string, Map<string, Uint32Array>>();
+          EOF
+          echo 'export const STATIONS_BYTES: Uint8Array = new Uint8Array();' > src/worker/generated/stations.ts
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
