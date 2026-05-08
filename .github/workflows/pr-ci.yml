@@ -17,6 +17,11 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
+      - name: Stub generated files
+        run: |
+          mkdir -p src/worker/generated
+          printf 'export const TEMPLATE_BYTES = new Uint8Array();\nexport const TRIP_OFFSETS = new Uint8Array();\nexport const STOP_OFFSETS = new Uint8Array();\n' > src/worker/generated/offsets.ts
+          printf 'export const STATIONS_BYTES = new Uint8Array();\n' > src/worker/generated/stations.ts
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
