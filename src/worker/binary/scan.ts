@@ -93,7 +93,7 @@ export function scanArrivalsBin(
 
   const outCount = Math.min(entries.length, 10);
   let outBytes = 1;
-  for (let i = 0; i < outCount; i++) outBytes += 4 + entries[i].dLen;
+  for (let i = 0; i < outCount; i++) outBytes += 5 + entries[i].dLen;
   const res = new Uint8Array(outBytes);
   let wp = 0;
   res[wp++] = outCount;
@@ -107,5 +107,6 @@ export function scanArrivalsBin(
     res[wp++] = timeMins & 0xFF;
     res[wp++] = delayStatus;
   }
+  if (wp !== outBytes) throw new Error(`scan: wrote ${wp}, allocated ${outBytes}`);
   return { buf: res, generatedAt };
 }
