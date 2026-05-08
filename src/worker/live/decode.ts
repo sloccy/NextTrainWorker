@@ -118,10 +118,11 @@ function readEntity(tag: number, _: null, pbf: Pbf): void {
           pbf.pos = subEnd;
           break outer;
         }
-        else pbf.skip(sv);
+        pbf.skip(sv);
       }
       break;
-    } else pbf.skip(v);
+    }
+    pbf.skip(v);
   }
 
   if (!tripId || !TRIP_OFFSETS.has(tripId)) {
