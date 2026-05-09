@@ -5,9 +5,9 @@ import { handleConfig } from "./worker/handlers/config.js";
 import { handleRefreshLive } from "./worker/handlers/refresh-live.js";
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const { pathname } = new URL(request.url);
-    if (pathname === "/a") return handleArrivals(request, env);
+    if (pathname === "/a") return handleArrivals(request, env, ctx);
     if (pathname === "/s") return handleStations();
     if (pathname === "/config.html") return handleConfig();
     return new Response("Not found", { status: 404 });
