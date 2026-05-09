@@ -1,9 +1,14 @@
 name = "nt"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
+workers_dev = true
 
 [triggers]
 crons = ["* * * * *"]
+
+[[routes]]
+pattern = "nt.sloccy.com"
+custom_domain = true
 
 [[r2_buckets]]
 binding = "ARRIVALS_R2"

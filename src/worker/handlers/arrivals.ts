@@ -32,7 +32,7 @@ export async function handleArrivals(request: Request, env: Env, ctx: ExecutionC
 
   const now = Math.floor(Date.now() / 1000);
   const nextRefresh = Math.max(result.generatedAt + 65, now + 30);
-  return new Response(result.buf, {
+  const res = new Response(result.buf, {
     headers: {
       "Content-Type": "application/octet-stream",
       "X-Next-Refresh": String(nextRefresh),
@@ -40,4 +40,6 @@ export async function handleArrivals(request: Request, env: Env, ctx: ExecutionC
       "Access-Control-Allow-Origin": "*",
     },
   });
+  ctx.waitUntil(caches.default.put(request, res.clone()));
+  return res;
 }
