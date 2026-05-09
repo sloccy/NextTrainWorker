@@ -32,14 +32,12 @@ export async function handleArrivals(request: Request, env: Env, ctx: ExecutionC
 
   const now = Math.floor(Date.now() / 1000);
   const nextRefresh = Math.max(result.generatedAt + 65, now + 30);
-  const res = new Response(result.buf, {
+  return new Response(result.buf, {
     headers: {
       "Content-Type": "application/octet-stream",
       "X-Next-Refresh": String(nextRefresh),
-      "Cache-Control": "public, max-age=20",
+      "Cache-Control": "private, max-age=20",
       "Access-Control-Allow-Origin": "*",
     },
   });
-  ctx.waitUntil(caches.default.put(request, res.clone()));
-  return res;
 }
