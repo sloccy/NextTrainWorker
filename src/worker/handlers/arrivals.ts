@@ -1,10 +1,10 @@
 import type { Env } from "../types.js";
-import { getArrivalsBin } from "../binary/r2.js";
+import { getArrivalsBinTiered } from "../binary/r2.js";
 import { scanArrivalsBin } from "../binary/scan.js";
 
 const DIR_MAP: Record<string, string> = { "0": "N", "1": "S", "2": "E", "3": "W" };
 
-export async function handleArrivals(request: Request, env: Env): Promise<Response> {
+export async function handleArrivals(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
   const station = url.searchParams.get("s");
   const routesParam = url.searchParams.get("r");
@@ -24,7 +24,7 @@ export async function handleArrivals(request: Request, env: Env): Promise<Respon
     routePairs.push({ route, dir });
   }
 
-  const bin = await getArrivalsBin(env);
+  const bin = await getArrivalsBinTiered(env, ctx);
   if (!bin) return new Response("Arrivals not yet available", { status: 503 });
 
   const result = scanArrivalsBin(bin, station, routePairs);
