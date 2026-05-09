@@ -1,9 +1,10 @@
 import type { Env } from "../types.js";
 import { getArrivalsBin, writeArrivalsBin } from "../binary/r2.js";
+import { putArrivalsBinInCache } from "../binary/cache.js";
+import { getCachedOutput, setCachedOutput } from "../binary/module-cache.js";
 import { fetchTripUpdates } from "../live/fetch.js";
 import { patchLive } from "../live/patch.js";
 
-let cachedOutput: Uint8Array | null = null;
 let lastFingerprint = -1;
 
 function fingerprint(buf: Uint8Array): number {
@@ -18,8 +19,8 @@ export async function handleRefreshLive(env: Env, ctx: ExecutionContext): Promis
   const tStart = Date.now();
   const [result, previous] = await Promise.all([
     fetchTripUpdates(),
-    cachedOutput
-      ? Promise.resolve(cachedOutput)
+    getCachedOutput()
+      ? Promise.resolve(getCachedOutput())
       : getArrivalsBin(env).catch((err: unknown) => {
           console.error("[refresh] R2 read failed:", err);
           return null;
@@ -34,7 +35,7 @@ export async function handleRefreshLive(env: Env, ctx: ExecutionContext): Promis
 
   const { tripStatus, stopOverrides } = result.data;
   const out = patchLive(tripStatus, stopOverrides, previous);
-  cachedOutput = out;
+  setCachedOutput(out);
   const tPatched = Date.now();
 
   let stopsCount = 0;
@@ -48,5 +49,8 @@ export async function handleRefreshLive(env: Env, ctx: ExecutionContext): Promis
     `[refresh] trips=${tripStatus.size} stops=${stopsCount} fetch=${tFetched - tStart}ms decode=${result.decodeMs}ms patch=${tPatched - tFetched}ms changed=${changed}`,
   );
 
-  if (changed) ctx.waitUntil(writeArrivalsBin(env, out));
+  if (changed) {
+    ctx.waitUntil(writeArrivalsBin(env, out));
+    putArrivalsBinInCache(ctx, out);
+  }
 }
