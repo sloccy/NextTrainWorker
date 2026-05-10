@@ -260,7 +260,7 @@ export async function buildSchedule(): Promise<BuiltSchedule> {
           r: a.route,
           c: routes.get(a.route)?.color ?? null,
           d: a.dir,
-          h: trip.headsign,
+          h: stripRoutePrefix(trip.headsign, a.route),
         });
       }
     }
@@ -272,6 +272,12 @@ export async function buildSchedule(): Promise<BuiltSchedule> {
   const stationsBin = buildStationsBin(stationEntries, generatedAt);
 
   return { generatedAt, templateBin, tripOffsets, stopOffsets, stationsBin };
+}
+
+function stripRoutePrefix(headsign: string, route: string): string {
+  const re = new RegExp(`^${route.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[- ]Line\\s+`, "i");
+  const stripped = headsign.replace(re, "").trim();
+  return stripped.length > 0 ? stripped : headsign;
 }
 
 function slugify(name: string): string {
