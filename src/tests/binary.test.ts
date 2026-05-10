@@ -79,7 +79,7 @@ describe("scanArrivalsBin", () => {
 
   it("drops a train whose predicted time is past the cutoff", () => {
     const fakeNow = BASE + 610 * 60;
-    const bin = buildTestBin(BASE, [{ slug: "test-station", arrivals: [{ route: "D", dir: "N", monoMins: 608, delayStatus: 0 }] }]);
+    const bin = buildTestBin(BASE, [{ slug: "test-station", arrivals: [{ route: "D", dir: "N", monoMins: 607, delayStatus: 0 }] }]);
     const realNow = Date.now;
     Date.now = () => fakeNow * 1000;
     try {
@@ -103,7 +103,7 @@ describe("scanArrivalsBin", () => {
 
   it("keeps an on-time train at exactly the cutoff", () => {
     const fakeNow = BASE + 610 * 60;
-    const bin = buildTestBin(BASE, [{ slug: "test-station", arrivals: [{ route: "D", dir: "N", monoMins: 609, delayStatus: 130 }] }]);
+    const bin = buildTestBin(BASE, [{ slug: "test-station", arrivals: [{ route: "D", dir: "N", monoMins: 608, delayStatus: 130 }] }]);
     const realNow = Date.now;
     Date.now = () => fakeNow * 1000;
     try {

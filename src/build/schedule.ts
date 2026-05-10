@@ -143,7 +143,7 @@ export async function buildSchedule(): Promise<BuiltSchedule> {
         if (!slug) continue;
 
         const scheduledUnix = midnightUTC + st.time_seconds;
-        if (scheduledUnix * 1000 < now - 1 * 60_000 || scheduledUnix * 1000 > windowEnd) continue;
+        if (scheduledUnix * 1000 < now - 2 * 60_000 || scheduledUnix * 1000 > windowEnd) continue;
 
         const existing = slugEntry.get(slug);
         if (existing) {
