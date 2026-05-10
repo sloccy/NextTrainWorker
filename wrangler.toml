@@ -6,9 +6,6 @@ workers_dev = true
 [triggers]
 crons = ["* * * * *"]
 
-[[routes]]
-pattern = "nt.sloccy.com"
-custom_domain = true
 
 [[r2_buckets]]
 binding = "ARRIVALS_R2"
