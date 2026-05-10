@@ -21,7 +21,7 @@ export function scanArrivalsBin(
   let pos = 0;
   const generatedAt = (bin[pos++] | (bin[pos++] << 8) | (bin[pos++] << 16) | (bin[pos++] << 24)) >>> 0;
   const baseMidnightUTC = (bin[pos++] | (bin[pos++] << 8) | (bin[pos++] << 16) | (bin[pos++] << 24)) >>> 0;
-  const cutoffMonoMins = Math.floor((Date.now() / 1000 - baseMidnightUTC) / 60) - 5;
+  const cutoffMonoMins = Math.floor((Date.now() / 1000 - baseMidnightUTC) / 60) - 1;
 
   const dictCount = bin[pos++] | (bin[pos++] << 8);
   const dictOffsets: number[] = [];
