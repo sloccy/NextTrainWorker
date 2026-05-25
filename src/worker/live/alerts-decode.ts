@@ -60,19 +60,29 @@ function readTranslatedString(tag: number, _: null, pbf: Pbf): void {
   if (_tsLang === "en" || _tsBest === "") _tsBest = _tsText;
 }
 
+// Only the first active_period is used (matches reference library behaviour).
+let _hadPeriod = false;
+
 function readTimeRange(tag: number, _: null, pbf: Pbf): void {
   if (tag === 1)      _alert.activeFrom  = pbf.readVarint(); // start
   else if (tag === 2) _alert.activeUntil = pbf.readVarint(); // end
 }
 
+function noop(_tag: number, _result: null, _pbf: Pbf): void {}
+
 function readEntitySelector(tag: number, _: null, pbf: Pbf): void {
-  if (tag === 2)      _alert.routeIds.push(readString(pbf)); // route_id
-  else if (tag === 3) _alert.routeTypes.push(pbf.readVarint()); // route_type
+  if (tag === 2) {
+    const id = readString(pbf);
+    if (id) _alert.routeIds.push(id); // skip empty route_id (entity has only route_type or stop)
+  } else if (tag === 3) {
+    _alert.routeTypes.push(pbf.readVarint());
+  }
 }
 
 function readAlert(tag: number, _: null, pbf: Pbf): void {
-  if (tag === 1) {        // active_period
-    pbf.readMessage(readTimeRange, null);
+  if (tag === 1) {        // active_period — only first
+    if (!_hadPeriod) { _hadPeriod = true; pbf.readMessage(readTimeRange, null); }
+    else pbf.readMessage(noop, null);
   } else if (tag === 5) { // informed_entity
     pbf.readMessage(readEntitySelector, null);
   } else if (tag === 6) { // cause
@@ -93,6 +103,7 @@ function readAlert(tag: number, _: null, pbf: Pbf): void {
 function readEntity(tag: number, _: null, pbf: Pbf): void {
   if (tag !== 5) return; // alert
   _alert = { routeIds: [], routeTypes: [], cause: 0, effect: 0, activeFrom: 0, activeUntil: 0, header: "", description: "" };
+  _hadPeriod = false;
   pbf.readMessage(readAlert, null);
   if (_alert.header || _alert.description || _alert.routeIds.length > 0) _out.push(_alert);
 }
