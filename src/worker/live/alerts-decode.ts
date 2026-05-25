@@ -20,6 +20,7 @@
  */
 
 import Pbf from "pbf";
+import { readString, noop } from "./pbf-util.js";
 
 export interface ParsedAlert {
   routeIds: string[];
@@ -32,7 +33,6 @@ export interface ParsedAlert {
   description: string;
 }
 
-const _td = new TextDecoder();
 const MAX_ALERTS = 200;
 
 let _out: ParsedAlert[];
@@ -40,13 +40,7 @@ let _alert: ParsedAlert;
 let _tsText = "";
 let _tsLang = "";
 let _tsBest = "";
-
-function readString(pbf: Pbf): string {
-  const len = pbf.readVarint();
-  const s = pbf.pos;
-  pbf.pos = s + len;
-  return _td.decode((pbf.buf as Uint8Array).subarray(s, s + len));
-}
+let _hadPeriod = false;
 
 function readTranslation(tag: number, _: null, pbf: Pbf): void {
   if (tag === 1)      _tsText = readString(pbf); // text
@@ -61,14 +55,10 @@ function readTranslatedString(tag: number, _: null, pbf: Pbf): void {
 }
 
 // Only the first active_period is used (matches reference library behaviour).
-let _hadPeriod = false;
-
 function readTimeRange(tag: number, _: null, pbf: Pbf): void {
   if (tag === 1)      _alert.activeFrom  = pbf.readVarint(); // start
   else if (tag === 2) _alert.activeUntil = pbf.readVarint(); // end
 }
-
-function noop(_tag: number, _result: null, _pbf: Pbf): void {}
 
 function readEntitySelector(tag: number, _: null, pbf: Pbf): void {
   if (tag === 2) {

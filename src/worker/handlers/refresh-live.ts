@@ -4,16 +4,9 @@ import { putArrivalsBinInCache } from "../binary/cache.js";
 import { getCachedOutput, setCachedOutput } from "../binary/module-cache.js";
 import { fetchTripUpdates } from "../live/fetch.js";
 import { patchLive } from "../live/patch.js";
+import { fingerprint } from "../binary/fingerprint.js";
 
 let lastFingerprint = -1;
-
-function fingerprint(buf: Uint8Array): number {
-  let h = 0;
-  // skip timestamp bytes 0..3
-  const u32 = new Uint32Array(buf.buffer, buf.byteOffset + 4, (buf.byteLength - 4) >>> 2);
-  for (let i = 0; i < u32.length; i++) h = (h ^ u32[i]) >>> 0;
-  return h;
-}
 
 export async function handleRefreshLive(env: Env, ctx: ExecutionContext): Promise<void> {
   const tStart = Date.now();

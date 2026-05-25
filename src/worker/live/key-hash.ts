@@ -28,3 +28,8 @@ const stopKeys = (function* () {
   for (const outer of STOP_OFFSETS.values()) yield* outer.keys();
 })();
 export const STOP_HASH: Map<number, string> = buildHash(stopKeys);
+
+export function hashStr(s: string): number {
+  const b = enc.encode(s);
+  return fnv1a(b, 0, b.length);
+}
