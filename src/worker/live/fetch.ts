@@ -2,7 +2,7 @@ import { decodeFeedMessage, type LiveData } from "./decode.js";
 
 const TRIPUPDATE_URL = "https://open-data.rtd-denver.com/files/gtfs-rt/rtd/TripUpdate.pb";
 
-const EMPTY: LiveData = { tripStatus: new Map(), stopOverrides: new Map() };
+const EMPTY: LiveData = { tripStatus: new Map(), stopOverrides: new Map(), entitySeen: 0, entityMissed: 0, missedSamples: new Set() };
 const STALE_MS = 60 * 60_000;
 
 // Conditional GET cache — persists across warm isolate ticks

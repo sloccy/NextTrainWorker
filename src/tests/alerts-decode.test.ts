@@ -62,7 +62,7 @@ function referenceAlerts(binary: Uint8Array): RefAlert[] {
       activeFrom,
       activeUntil,
       header: bestText(a.headerText).slice(0, 200),
-      description: bestText(a.descriptionText).slice(0, 512),
+      description: bestText(a.descriptionText).slice(0, 2000),
     });
   }
   return out;
@@ -102,7 +102,7 @@ describe("decodeAlertFeed — parity with gtfs-realtime-bindings", () => {
     }
   });
 
-  it("header and description match (truncated to 200B / 512B, English preferred)", () => {
+  it("header and description match (truncated to 200B / 2000B, English preferred)", () => {
     const ref = referenceAlerts(raw);
     const ours = filteredCustom(raw);
     for (let i = 0; i < ref.length; i++) {
