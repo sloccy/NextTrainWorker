@@ -7,7 +7,7 @@ import { fetchVehiclePositions } from "../live/vehicles-fetch.js";
 import type { VehicleEvent } from "../live/vehicles-decode.js";
 import { patchLive } from "../live/patch.js";
 import { fingerprint } from "../binary/fingerprint.js";
-import { TEMPLATE_BYTES, STOP_OFFSETS } from "../generated/offsets.js";
+import { TEMPLATE_BYTES, STOP_OFFSETS, STOP_ID_TO_SLUG } from "../generated/offsets.js";
 
 const TEMPLATE_LEN = TEMPLATE_BYTES.length;
 const _te = new TextEncoder();
@@ -31,7 +31,9 @@ function buildVpSection(events: VehicleEvent[]): Uint8Array {
     const routeIdx  = TEMPLATE_BYTES[off - 4];
     const dir       = TEMPLATE_BYTES[off - 3];
     const schedMins = TEMPLATE_BYTES[off - 2] | (TEMPLATE_BYTES[off - 1] << 8);
-    const stopIdBytes = _te.encode(ev.stopId);
+    const slug = STOP_ID_TO_SLUG.get(ev.stopId);
+    if (!slug) continue;
+    const stopIdBytes = _te.encode(slug);
     entries.push({ routeIdx, dir, schedMins, stopIdBytes });
     seenTrips.add(ev.tripId);
   }
