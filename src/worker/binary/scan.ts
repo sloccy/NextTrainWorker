@@ -157,10 +157,24 @@ export function scanArrivalsBin(
   entries.sort((a, b) => a.predictedMins - b.predictedMins);
 
   const outCount = Math.min(entries.length, 10);
-  // Pre-encode stop_ids to know byte sizes
   const _te = new TextEncoder();
-  const atStops: Uint8Array[] = entries.slice(0, outCount).map(e => {
+
+  // Two-pass VP assignment: live trips (have TripUpdate data) claim VPs before
+  // pure SCHED trips, since TripUpdate confirms the vehicle's trip identity.
+  const topEntries = entries.slice(0, outCount);
+  const vpResult = new Map<Entry, string>();
+  for (const e of topEntries) {
+    if (e.delayStatus === 0) continue;
     const s = findCurrentStop(vpMap, e.routeIdx, e.dirCode, e.monoMins);
+    if (s) vpResult.set(e, s);
+  }
+  for (const e of topEntries) {
+    if (e.delayStatus !== 0) continue;
+    const s = findCurrentStop(vpMap, e.routeIdx, e.dirCode, e.monoMins);
+    if (s) vpResult.set(e, s);
+  }
+  const atStops: Uint8Array[] = topEntries.map(e => {
+    const s = vpResult.get(e) || '';
     return s ? _te.encode(s) : new Uint8Array(0);
   });
 
