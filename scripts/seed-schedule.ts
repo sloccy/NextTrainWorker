@@ -3,6 +3,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 const GENERATED_DIR = "src/worker/generated";
+const ROUTE_IDS_PATH = "src/worker/route-ids.ts";
 
 function b64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64");
@@ -90,9 +91,22 @@ export const STATIONS_BYTES: Uint8Array = _b64("${sB64}");
 `;
 }
 
+function emitRouteIds(routeIdToShortName: Map<string, string>): string {
+  const entries = [...routeIdToShortName.entries()]
+    .map(([k, v]) => `  "${k}": "${v}"`)
+    .join(",\n");
+  return `// AUTO-UPDATED by scripts/seed-schedule.ts — reflects current RTD GTFS rail routes.
+// Maps raw GTFS route_id → display short name.
+
+export const ROUTE_ID_TO_SHORT_NAME: Readonly<Record<string, string>> = {
+${entries}
+};
+`;
+}
+
 async function main(): Promise<void> {
   console.log("[seed] Building schedule...");
-  const { generatedAt, templateBin, tripOffsets, stopOffsets, stationsBin } = await buildSchedule();
+  const { generatedAt, templateBin, tripOffsets, stopOffsets, stationsBin, routeIdToShortName } = await buildSchedule();
   console.log(
     `[seed] Built — template=${(templateBin.length / 1024).toFixed(1)}KB` +
     `  trips=${tripOffsets.size}  stops=${stopOffsets.size}` +
@@ -109,6 +123,9 @@ async function main(): Promise<void> {
   const stationsPath = join(GENERATED_DIR, "stations.ts");
   writeFileSync(stationsPath, emitStations(stationsBin, version));
   console.log(`[seed] Wrote ${stationsPath}`);
+
+  writeFileSync(ROUTE_IDS_PATH, emitRouteIds(routeIdToShortName));
+  console.log(`[seed] Wrote ${ROUTE_IDS_PATH}`);
 
   console.log(`[seed] Done. version=${version}`);
 }
