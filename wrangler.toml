@@ -4,7 +4,7 @@ compatibility_date = "2024-09-23"
 workers_dev = true
 
 [triggers]
-crons = ["* * * * *", "0 10 * * *"]
+crons = ["* * * * *", "*/2 * * * *", "0 10 * * *"]
 
 
 [[r2_buckets]]
