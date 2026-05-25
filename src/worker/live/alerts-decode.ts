@@ -1,168 +1,109 @@
 /**
- * Minimal GTFS-RT FeedMessage decoder for the Alerts feed.
+ * pbf-based GTFS-RT decoder for the Alerts feed.
+ * Mirrors the pattern in decode.ts — module-scope state, readFields/readMessage.
  *
- * Relevant field tags (field << 3 | wire_type):
- *   FeedMessage.entity              field 2 wire 2 → 0x12
- *   FeedEntity.alert                field 5 wire 2 → 0x2a
- *   Alert.active_period             field 1 wire 2 → 0x0a
- *   Alert.informed_entity           field 5 wire 2 → 0x2a
- *   Alert.cause                     field 6 wire 0 → 0x30
- *   Alert.effect                    field 7 wire 0 → 0x38
- *   Alert.header_text               field 10 wire 2 → 0x52
- *   Alert.description_text          field 11 wire 2 → 0x5a
- *   TimeRange.start                 field 1 wire 0 → 0x08
- *   TimeRange.end                   field 2 wire 0 → 0x10
- *   EntitySelector.route_id         field 2 wire 2 → 0x12
- *   EntitySelector.route_type       field 3 wire 0 → 0x18
- *   TranslatedString.translation    field 1 wire 2 → 0x0a
- *   Translation.text                field 1 wire 2 → 0x0a
- *   Translation.language            field 2 wire 2 → 0x12
+ * Alert field numbers:
+ *   FeedEntity.alert             = 5
+ *   Alert.active_period          = 1  (TimeRange)
+ *   Alert.informed_entity        = 5  (EntitySelector)
+ *   Alert.cause                  = 6
+ *   Alert.effect                 = 7
+ *   Alert.header_text            = 10 (TranslatedString)
+ *   Alert.description_text       = 11 (TranslatedString)
+ *   TimeRange.start              = 1
+ *   TimeRange.end                = 2
+ *   EntitySelector.route_id      = 2
+ *   EntitySelector.route_type    = 3
+ *   TranslatedString.translation = 1  (Translation)
+ *   Translation.text             = 1
+ *   Translation.language         = 2
  */
+
+import Pbf from "pbf";
 
 export interface ParsedAlert {
   routeIds: string[];
   routeTypes: number[];
   cause: number;
   effect: number;
-  activeFrom: number;  // unix seconds, 0 if unspecified
-  activeUntil: number; // unix seconds, 0 if unspecified
+  activeFrom: number;
+  activeUntil: number;
   header: string;
   description: string;
 }
 
-const MAX_HEADER = 200;
-const MAX_DESC = 512;
+const _td = new TextDecoder();
 const MAX_ALERTS = 200;
 
-const r = {
-  buf: new Uint8Array(0) as Uint8Array,
-  pos: 0,
+let _out: ParsedAlert[];
+let _alert: ParsedAlert;
+let _tsText = "";
+let _tsLang = "";
+let _tsBest = "";
 
-  varint(): number {
-    let b = this.buf[this.pos++];
-    if (!(b & 0x80)) return b;
-    let res = b & 0x7f;
-    b = this.buf[this.pos++];
-    res |= (b & 0x7f) << 7;
-    if (!(b & 0x80)) return res;
-    b = this.buf[this.pos++];
-    res |= (b & 0x7f) << 14;
-    if (!(b & 0x80)) return res;
-    b = this.buf[this.pos++];
-    res |= (b & 0x7f) << 21;
-    if (!(b & 0x80)) return res;
-    b = this.buf[this.pos++];
-    res += (b & 0x7f) * 268435456;
-    if (!(b & 0x80)) return res;
-    while (this.buf[this.pos++] & 0x80);
-    return res;
-  },
+function readString(pbf: Pbf): string {
+  const len = pbf.readVarint();
+  const s = pbf.pos;
+  pbf.pos = s + len;
+  return _td.decode((pbf.buf as Uint8Array).subarray(s, s + len));
+}
 
-  skip(wtype: number): void {
-    if (wtype === 0) { while (this.buf[this.pos++] & 0x80); }
-    else if (wtype === 2) { const n = this.varint(); this.pos += n; }
-    else if (wtype === 1) { this.pos += 8; }
-    else if (wtype === 5) { this.pos += 4; }
-  },
+function readTranslation(tag: number, _: null, pbf: Pbf): void {
+  if (tag === 1)      _tsText = readString(pbf); // text
+  else if (tag === 2) _tsLang = readString(pbf); // language
+}
 
-  readString(): string {
-    const len = this.varint();
-    const bytes = this.buf.subarray(this.pos, this.pos + len);
-    this.pos += len;
-    return new TextDecoder().decode(bytes);
-  },
-};
+function readTranslatedString(tag: number, _: null, pbf: Pbf): void {
+  if (tag !== 1) return; // translation
+  _tsText = ""; _tsLang = "";
+  pbf.readMessage(readTranslation, null);
+  if (_tsLang === "en" || _tsBest === "") _tsBest = _tsText;
+}
 
-function readTranslatedString(end: number, maxLen: number): string {
-  let best = "";
-  while (r.pos < end) {
-    const t = r.buf[r.pos++];
-    if (t === 0x0a) {
-      const trLen = r.varint(); const trEnd = r.pos + trLen;
-      let text = "";
-      let lang = "";
-      while (r.pos < trEnd) {
-        const tt = r.buf[r.pos++];
-        if (tt === 0x0a) { text = r.readString(); }
-        else if (tt === 0x12) { lang = r.readString(); }
-        else { r.skip(tt & 7); }
-      }
-      r.pos = trEnd;
-      if (lang === "en" || best === "") best = text;
-    } else {
-      r.skip(t & 7);
-    }
+function readTimeRange(tag: number, _: null, pbf: Pbf): void {
+  if (tag === 1)      _alert.activeFrom  = pbf.readVarint(); // start
+  else if (tag === 2) _alert.activeUntil = pbf.readVarint(); // end
+}
+
+function readEntitySelector(tag: number, _: null, pbf: Pbf): void {
+  if (tag === 2)      _alert.routeIds.push(readString(pbf)); // route_id
+  else if (tag === 3) _alert.routeTypes.push(pbf.readVarint()); // route_type
+}
+
+function readAlert(tag: number, _: null, pbf: Pbf): void {
+  if (tag === 1) {        // active_period
+    pbf.readMessage(readTimeRange, null);
+  } else if (tag === 5) { // informed_entity
+    pbf.readMessage(readEntitySelector, null);
+  } else if (tag === 6) { // cause
+    _alert.cause = pbf.readVarint();
+  } else if (tag === 7) { // effect
+    _alert.effect = pbf.readVarint();
+  } else if (tag === 10) { // header_text
+    _tsBest = "";
+    pbf.readMessage(readTranslatedString, null);
+    _alert.header = _tsBest.slice(0, 200);
+  } else if (tag === 11) { // description_text
+    _tsBest = "";
+    pbf.readMessage(readTranslatedString, null);
+    _alert.description = _tsBest.slice(0, 512);
   }
-  return best.slice(0, maxLen);
+}
+
+function readEntity(tag: number, _: null, pbf: Pbf): void {
+  if (tag !== 5) return; // alert
+  _alert = { routeIds: [], routeTypes: [], cause: 0, effect: 0, activeFrom: 0, activeUntil: 0, header: "", description: "" };
+  pbf.readMessage(readAlert, null);
+  if (_alert.header || _alert.description || _alert.routeIds.length > 0) _out.push(_alert);
+}
+
+function readFeed(tag: number, _: null, pbf: Pbf): void {
+  if (tag === 2 && _out.length < MAX_ALERTS) pbf.readMessage(readEntity, null); // entity
 }
 
 export function decodeAlertFeed(buf: Uint8Array): ParsedAlert[] {
-  r.buf = buf;
-  r.pos = 0;
-  const out: ParsedAlert[] = [];
-  const len = buf.length;
-
-  while (r.pos < len && out.length < MAX_ALERTS) {
-    const t = buf[r.pos++];
-    if (t === 0x12) {
-      const entityLen = r.varint(); const entityEnd = r.pos + entityLen;
-      while (r.pos < entityEnd) {
-        const te = buf[r.pos++];
-        if (te === 0x2a) {
-          const alertLen = r.varint(); const alertEnd = r.pos + alertLen;
-          const alert: ParsedAlert = {
-            routeIds: [], routeTypes: [], cause: 0, effect: 0,
-            activeFrom: 0, activeUntil: 0, header: "", description: "",
-          };
-
-          while (r.pos < alertEnd) {
-            const ta = buf[r.pos++];
-            if (ta === 0x0a) {
-              const trLen = r.varint(); const trEnd = r.pos + trLen;
-              while (r.pos < trEnd) {
-                const tp = buf[r.pos++];
-                if (tp === 0x08) { alert.activeFrom = r.varint(); }
-                else if (tp === 0x10) { alert.activeUntil = r.varint(); }
-                else { r.skip(tp & 7); }
-              }
-              r.pos = trEnd;
-            } else if (ta === 0x2a) {
-              const esLen = r.varint(); const esEnd = r.pos + esLen;
-              while (r.pos < esEnd) {
-                const te2 = buf[r.pos++];
-                if (te2 === 0x12) { alert.routeIds.push(r.readString()); }
-                else if (te2 === 0x18) { alert.routeTypes.push(r.varint()); }
-                else { r.skip(te2 & 7); }
-              }
-              r.pos = esEnd;
-            } else if (ta === 0x30) {
-              alert.cause = r.varint();
-            } else if (ta === 0x38) {
-              alert.effect = r.varint();
-            } else if (ta === 0x52) {
-              const tsLen = r.varint(); const tsEnd = r.pos + tsLen;
-              alert.header = readTranslatedString(tsEnd, MAX_HEADER);
-              r.pos = tsEnd;
-            } else if (ta === 0x5a) {
-              const tsLen2 = r.varint(); const tsEnd = r.pos + tsLen2;
-              alert.description = readTranslatedString(tsEnd, MAX_DESC);
-              r.pos = tsEnd;
-            } else {
-              r.skip(ta & 7);
-            }
-          }
-
-          if (alert.header || alert.description || alert.routeIds.length > 0) out.push(alert);
-          r.pos = alertEnd;
-        } else {
-          r.skip(te & 7);
-        }
-      }
-      r.pos = entityEnd;
-    } else {
-      r.skip(t & 7);
-    }
-  }
-
-  return out;
+  _out = [];
+  const pbf = new Pbf(buf);
+  pbf.readFields(readFeed, null);
+  return _out;
 }
