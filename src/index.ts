@@ -7,6 +7,9 @@ import { handleAlerts } from "./worker/handlers/alerts.js";
 import { handleRefreshAlerts } from "./worker/handlers/refresh-alerts.js";
 import { handleOtp } from "./worker/handlers/otp.js";
 import { handleRefreshOtp, handleOtpRollup } from "./worker/handlers/refresh-otp.js";
+import { fetchTripUpdates } from "./worker/live/fetch.js";
+import { fetchVehiclePositions } from "./worker/live/vehicles-fetch.js";
+import { fetchAlerts } from "./worker/live/alerts-fetch.js";
 
 async function timed(fn: () => Promise<void>): Promise<number> {
   const t = Date.now();
@@ -26,19 +29,22 @@ export default {
   },
 
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
-    if (event.cron === "* * * * *") {
-      const t = Date.now();
-      await handleRefreshLive(env, ctx);
-      console.log(`[cron-a] live=${Date.now() - t}ms`);
-    } else if (event.cron === "*/1 * * * *") {
-      const tStart = Date.now();
-      const [alertsMs, otpMs] = await Promise.all([
-        timed(() => handleRefreshAlerts(env, ctx)),
-        timed(() => handleRefreshOtp(env, ctx)),
-      ]);
-      console.log(`[cron-b] alerts=${alertsMs}ms otp=${otpMs}ms total=${Date.now() - tStart}ms`);
-    } else if (event.cron === "0 10 * * *") {
+    if (event.cron === "0 10 * * *") {
       await handleOtpRollup(env);
+      return;
     }
+    const tStart = Date.now();
+    const [tripResult, vpResult, alertsResult] = await Promise.all([
+      fetchTripUpdates(),
+      fetchVehiclePositions(),
+      fetchAlerts(),
+    ]);
+    const tFetched = Date.now();
+    const [liveMs, alertsMs, otpMs] = await Promise.all([
+      timed(() => handleRefreshLive(env, ctx, tripResult, vpResult)),
+      timed(() => handleRefreshAlerts(env, ctx, alertsResult)),
+      timed(() => handleRefreshOtp(env, ctx, vpResult)),
+    ]);
+    console.log(`[cron] fetch=${tFetched - tStart}ms live=${liveMs}ms alerts=${alertsMs}ms otp=${otpMs}ms total=${Date.now() - tStart}ms`);
   },
 };

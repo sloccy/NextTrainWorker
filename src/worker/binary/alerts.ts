@@ -114,8 +114,9 @@ export function buildAlertsBin(alerts: ParsedAlert[], generatedAt: number): Uint
     const nameBytes = _te.encode(routeName);
     w.writeU8(nameBytes.length & 0xFF);
     w.writeBytes(nameBytes);
-    w.writeU8(Math.min(bucket.size, 255));
-    for (const alert of bucket) {
+    const alertList = [...bucket].slice(0, 255);
+    w.writeU8(alertList.length);
+    for (const alert of alertList) {
       w.writeU32(alert.activeFrom);
       w.writeU32(alert.activeUntil);
       w.writeU8(alert.cause);

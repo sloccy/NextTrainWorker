@@ -2,8 +2,8 @@ import type { Env } from "../types.js";
 import { getArrivalsBin, writeArrivalsBin } from "../binary/r2.js";
 import { putArrivalsBinInCache } from "../binary/cache.js";
 import { getCachedOutput, setCachedOutput } from "../binary/module-cache.js";
-import { fetchTripUpdates } from "../live/fetch.js";
-import { fetchVehiclePositions } from "../live/vehicles-fetch.js";
+import type { FetchResult } from "../live/fetch.js";
+import type { FetchedResult } from "../live/conditional-fetch.js";
 import type { VehicleEvent } from "../live/vehicles-decode.js";
 import { patchLive } from "../live/patch.js";
 import { fingerprint } from "../binary/fingerprint.js";
@@ -47,8 +47,9 @@ function buildVpSection(events: VehicleEvent[]): Uint8Array {
     seenTrips.add(ev.tripId);
   }
 
-  // Allocate conservatively: 2 (count) + per entry up to 5 + 255 bytes
-  const buf = new Uint8Array(2 + entries.length * 30);
+  let total = 2; // u16 count
+  for (const e of entries) total += 5 + Math.min(e.stopIdBytes.length, 255);
+  const buf = new Uint8Array(total);
   let pos = 0;
   buf[pos++] = entries.length & 0xFF;
   buf[pos++] = (entries.length >>> 8) & 0xFF;
@@ -79,26 +80,23 @@ function assembleFullBin(templateOut: Uint8Array, vpSection: Uint8Array): Uint8A
   return full;
 }
 
-export async function handleRefreshLive(env: Env, ctx: ExecutionContext): Promise<void> {
+export async function handleRefreshLive(env: Env, ctx: ExecutionContext, tripResult: FetchResult, vpResult: FetchedResult<VehicleEvent[]>): Promise<void> {
   const tStart = Date.now();
   const storedFull = getCachedOutput();
 
-  const [tripResult, vpResult, fromR2] = await Promise.all([
-    fetchTripUpdates(),
-    fetchVehiclePositions(),
-    storedFull
-      ? Promise.resolve(null)
-      : getArrivalsBin(env).catch((err: unknown) => {
-          console.error("[refresh] R2 read failed:", err);
-          return null;
-        }),
-  ]);
-  const tFetched = Date.now();
-
-  if (!tripResult.fresh) {
-    console.log("[refresh] 304 or stale, skipped");
+  if (!tripResult.fresh && !vpResult.fresh && storedFull) {
+    console.log("[refresh] both 304, skipped");
     return;
   }
+
+  const fromR2 = storedFull
+    ? null
+    : await getArrivalsBin(env).catch((err: unknown) => {
+        console.error("[refresh] R2 read failed:", err);
+        return null;
+      });
+
+  const tFetched = Date.now();
 
   // Slice stored binary to template-only so patchLive's set() call doesn't overflow.
   const previousFull = storedFull ?? fromR2;
@@ -130,7 +128,12 @@ export async function handleRefreshLive(env: Env, ctx: ExecutionContext): Promis
   );
 
   if (changed) {
-    ctx.waitUntil(writeArrivalsBin(env, out));
     putArrivalsBinInCache(ctx, out);
+    ctx.waitUntil(
+      writeArrivalsBin(env, out).catch((err: unknown) => {
+        console.error("[refresh] R2 write failed:", err);
+        lastFingerprint = -1;
+      }),
+    );
   }
 }

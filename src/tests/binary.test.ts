@@ -1,6 +1,33 @@
 import { describe, it, expect } from "vitest";
 import { scanArrivalsBin } from "../worker/binary/scan.js";
 
+const _te = new TextEncoder();
+const _td = new TextDecoder();
+
+/** Append a VP section + footer to an existing template bin (mirrors assembleFullBin). */
+function appendVpSection(
+  template: Uint8Array,
+  vpEntries: Array<{ routeIdx: number; dir: number; schedMins: number; stopId: string }>,
+): Uint8Array {
+  const vpBytes: number[] = [];
+  vpBytes.push(vpEntries.length & 0xFF, (vpEntries.length >>> 8) & 0xFF);
+  for (const e of vpEntries) {
+    const sb = _te.encode(e.stopId);
+    const slen = Math.min(sb.length, 255);
+    vpBytes.push(e.routeIdx, e.dir, e.schedMins & 0xFF, (e.schedMins >>> 8) & 0xFF, slen);
+    for (let i = 0; i < slen; i++) vpBytes.push(sb[i]);
+  }
+  const vpOff = template.length;
+  const full = new Uint8Array(template.length + vpBytes.length + 4);
+  full.set(template);
+  for (let i = 0; i < vpBytes.length; i++) full[template.length + i] = vpBytes[i];
+  full[vpOff + vpBytes.length]     = vpOff & 0xFF;
+  full[vpOff + vpBytes.length + 1] = (vpOff >>> 8) & 0xFF;
+  full[vpOff + vpBytes.length + 2] = (vpOff >>> 16) & 0xFF;
+  full[vpOff + vpBytes.length + 3] = (vpOff >>> 24) & 0xFF;
+  return full;
+}
+
 function buildTestBin(
   baseMidnight: number,
   stations: Array<{
@@ -98,6 +125,47 @@ describe("scanArrivalsBin", () => {
       const r = scanArrivalsBin(bin, "test-station", [{ route: "D", dir: "N" }]);
       expect(r).not.toBeNull();
       expect(r!.buf[0]).toBe(0);
+    } finally { Date.now = realNow; }
+  });
+
+  it("negative predictedMins wraps to end-of-day, not garbage bytes", () => {
+    // monoMins=2, delay=-3 → predictedMins=-1 → should encode as 1439 (23:59)
+    const fakeNow = BASE - 5 * 60; // 5 min before schedule midnight → cutoffMonoMins=-7
+    const bin = buildTestBin(BASE, [{ slug: "s", arrivals: [{ route: "D", dir: "N", monoMins: 2, delayStatus: 253 }] }]);
+    const realNow = Date.now;
+    Date.now = () => fakeNow * 1000;
+    try {
+      const r = scanArrivalsBin(bin, "s", [{ route: "D", dir: "N" }]);
+      expect(r).not.toBeNull();
+      expect(r!.buf[0]).toBe(1);
+      const timeHi = r!.buf[4];
+      const timeLo = r!.buf[5];
+      expect((timeHi << 8) | timeLo).toBe(1439); // 23:59, not 65535
+    } finally { Date.now = realNow; }
+  });
+
+  it("VP section with 47-byte slug round-trips correctly", () => {
+    const LONG_SLUG = "flatiron_crossing_mall_ring_rd_interlocken_blvd"; // 47 bytes
+    // fakeNow must be before predictedMins(=155) to survive the cutoff filter
+    const fakeNow = BASE + 152 * 60; // cutoffMonoMins = 150, predictedMins = 155 → kept
+    const template = buildTestBin(BASE, [{
+      slug: "station",
+      arrivals: [{ route: "D", dir: "N", monoMins: 150, delayStatus: 5 }],
+    }]);
+    const bin = appendVpSection(template, [{
+      routeIdx: 0, dir: "N".charCodeAt(0), schedMins: 150, stopId: LONG_SLUG,
+    }]);
+    const realNow = Date.now;
+    Date.now = () => fakeNow * 1000;
+    try {
+      const r = scanArrivalsBin(bin, "station", [{ route: "D", dir: "N" }]);
+      expect(r).not.toBeNull();
+      expect(r!.buf[0]).toBe(1);
+      // wire: count(1) + routeLen(1) + 'D'(1) + dir(1) + timeHi(1) + timeLo(1) + delay(1) + atStopLen(1) + atStop(N)
+      const atStopLen = r!.buf[7];
+      const atStop = _td.decode(r!.buf.subarray(8, 8 + atStopLen));
+      expect(atStopLen).toBe(47);
+      expect(atStop).toBe(LONG_SLUG);
     } finally { Date.now = realNow; }
   });
 

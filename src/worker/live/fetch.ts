@@ -20,8 +20,8 @@ export interface FetchResult {
 export async function fetchTripUpdates(): Promise<FetchResult> {
   try {
     const headers: Record<string, string> = { "Accept-Encoding": "gzip" };
-    if (cachedEtag) headers["If-None-Match"] = cachedEtag;
-    else if (cachedLastMod) headers["If-Modified-Since"] = cachedLastMod;
+    if (cachedEtag)    headers["If-None-Match"]     = cachedEtag;
+    if (cachedLastMod) headers["If-Modified-Since"] = cachedLastMod;
 
     const resp = await fetch(TRIPUPDATE_URL, { headers });
 
@@ -31,10 +31,8 @@ export async function fetchTripUpdates(): Promise<FetchResult> {
 
     if (!resp.ok) throw new Error(`TripUpdate fetch failed: ${resp.status} ${resp.statusText}`);
 
-    const etag = resp.headers.get("ETag");
-    const lastMod = resp.headers.get("Last-Modified");
-    if (etag) cachedEtag = etag;
-    else if (lastMod) cachedLastMod = lastMod;
+    cachedEtag    = resp.headers.get("ETag");
+    cachedLastMod = resp.headers.get("Last-Modified");
 
     const buf = new Uint8Array(await resp.arrayBuffer());
     const t0 = Date.now();

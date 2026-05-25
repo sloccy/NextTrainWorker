@@ -1,5 +1,4 @@
 import type { Env } from "../types.js";
-import { fetchAlerts } from "../live/alerts-fetch.js";
 import type { FetchedResult } from "../live/conditional-fetch.js";
 import type { ParsedAlert } from "../live/alerts-decode.js";
 import { buildAlertsBin } from "../binary/alerts.js";
@@ -10,15 +9,7 @@ import { putAlertsBinInCache } from "../binary/cache.js";
 
 let lastFingerprint = -1;
 
-export async function handleRefreshAlerts(env: Env, ctx: ExecutionContext): Promise<void> {
-  let result: FetchedResult<ParsedAlert[]>;
-  try {
-    result = await fetchAlerts();
-  } catch (err) {
-    console.error("[refresh-alerts] fetch failed:", err);
-    return;
-  }
-
+export async function handleRefreshAlerts(env: Env, ctx: ExecutionContext, result: FetchedResult<ParsedAlert[]>): Promise<void> {
   if (!result.fresh) return;
 
   const tBuild = Date.now();
@@ -37,6 +28,11 @@ export async function handleRefreshAlerts(env: Env, ctx: ExecutionContext): Prom
   if (changed) {
     setCachedBin("alerts", bin);
     putAlertsBinInCache(ctx, bin);
-    ctx.waitUntil(writeAlertsBin(env, bin));
+    ctx.waitUntil(
+      writeAlertsBin(env, bin).catch((err: unknown) => {
+        console.error("[refresh-alerts] R2 write failed:", err);
+        lastFingerprint = -1;
+      }),
+    );
   }
 }
