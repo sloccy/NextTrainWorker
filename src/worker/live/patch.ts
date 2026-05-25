@@ -43,11 +43,12 @@ export function patchLiveWith(
     out.set(template);
   }
 
-  const now = Math.floor(Date.now() / 1000);
-  out[0] = now & 0xFF;
-  out[1] = (now >>> 8) & 0xFF;
-  out[2] = (now >>> 16) & 0xFF;
-  out[3] = (now >>> 24) & 0xFF;
+  const nowSec = Math.floor(Date.now() / 1000);
+  out[0] = nowSec & 0xFF;
+  out[1] = (nowSec >>> 8) & 0xFF;
+  out[2] = (nowSec >>> 16) & 0xFF;
+  out[3] = (nowSec >>> 24) & 0xFF;
+  const baseMidnight = (template[4] | (template[5] << 8) | (template[6] << 16) | (template[7] << 24)) >>> 0;
 
   for (const [tripId, rel] of tripStatus) {
     if (rel !== 3) continue;
@@ -63,7 +64,13 @@ export function patchLiveWith(
     for (const [stopId, statusByte] of byStop) {
       const offs = outer.get(stopId);
       if (!offs) continue;
-      for (let i = 0; i < offs.length; i++) out[offs[i]] = statusByte;
+      for (let i = 0; i < offs.length; i++) {
+        if (offs.length > 1) {
+          const monoMins = template[offs[i] - 2] | (template[offs[i] - 1] << 8);
+          if (Math.abs(baseMidnight + monoMins * 60 - nowSec) > 12 * 3600) continue;
+        }
+        out[offs[i]] = statusByte;
+      }
     }
   }
 

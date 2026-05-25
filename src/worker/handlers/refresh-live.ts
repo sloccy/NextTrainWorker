@@ -8,6 +8,7 @@ import type { VehicleEvent } from "../live/vehicles-decode.js";
 import { patchLive } from "../live/patch.js";
 import { fingerprint } from "../binary/fingerprint.js";
 import { TEMPLATE_BYTES, STOP_OFFSETS, STOP_ID_TO_SLUG } from "../generated/offsets.js";
+import { BASE_MIDNIGHT_UTC } from "../util/base-time.js";
 
 const TEMPLATE_LEN = TEMPLATE_BYTES.length;
 const _te = new TextEncoder();
@@ -27,7 +28,15 @@ function buildVpSection(events: VehicleEvent[]): Uint8Array {
     if (!stopMap) continue; // non-rail trip
     const offs = stopMap.get(ev.stopId);
     if (!offs || offs.length === 0) continue; // stop not in schedule
-    const off = offs[0];
+    let off = offs[0];
+    if (offs.length > 1 && ev.timestamp > 0) {
+      let bestDiff = Infinity;
+      for (let i = 0; i < offs.length; i++) {
+        const monoMins = TEMPLATE_BYTES[offs[i] - 2] | (TEMPLATE_BYTES[offs[i] - 1] << 8);
+        const diff = Math.abs(ev.timestamp - (BASE_MIDNIGHT_UTC + monoMins * 60));
+        if (diff < bestDiff) { bestDiff = diff; off = offs[i]; }
+      }
+    }
     const routeIdx  = TEMPLATE_BYTES[off - 4];
     const dir       = TEMPLATE_BYTES[off - 3];
     const schedMins = TEMPLATE_BYTES[off - 2] | (TEMPLATE_BYTES[off - 1] << 8);
@@ -108,6 +117,9 @@ export async function handleRefreshLive(env: Env, ctx: ExecutionContext): Promis
   const fp = fingerprint(out);
   const changed = fp !== lastFingerprint;
   lastFingerprint = fp;
+
+  const scheduleAgeHours = (Date.now() / 1000 - BASE_MIDNIGHT_UTC) / 3600;
+  if (scheduleAgeHours > 26) console.warn(`[refresh] STALE SCHEDULE: ${scheduleAgeHours.toFixed(1)}h old (baseMidnight=${new Date(BASE_MIDNIGHT_UTC * 1000).toISOString()})`);
 
   const { entitySeen, entityMissed, missedSamples } = tripResult.data;
   const missInfo = entityMissed > 0

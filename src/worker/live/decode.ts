@@ -14,14 +14,19 @@ import { BASE_MIDNIGHT_UTC } from "../util/base-time.js";
 
 const _td = new TextDecoder();
 
-function stopSchedSec(tripId: string, stopId: string): number {
+function stopSchedSec(tripId: string, stopId: string, evTime: number): number {
   const inner = STOP_OFFSETS.get(tripId);
   if (!inner) return 0;
   const offs = inner.get(stopId);
   if (!offs || offs.length === 0) return 0;
-  const off = offs[0];
-  const monoMins = TEMPLATE_BYTES[off - 2] | (TEMPLATE_BYTES[off - 1] << 8);
-  return BASE_MIDNIGHT_UTC + monoMins * 60;
+  let bestSched = 0, bestDiff = Infinity;
+  for (let i = 0; i < offs.length; i++) {
+    const monoMins = TEMPLATE_BYTES[offs[i] - 2] | (TEMPLATE_BYTES[offs[i] - 1] << 8);
+    const sched = BASE_MIDNIGHT_UTC + monoMins * 60;
+    const diff = Math.abs(evTime - sched);
+    if (diff < bestDiff) { bestDiff = diff; bestSched = sched; }
+  }
+  return bestSched;
 }
 
 export interface LiveData {
@@ -110,7 +115,7 @@ function readTU(tag: number, _: null, pbf: Pbf): void {
     if (_hasEv) {
       if (_evDelay !== 0) { delaySec = _evDelay; useIt = true; }
       else if (_evHasTime) {
-        const sched = stopSchedSec(_tripId, _stopId);
+        const sched = stopSchedSec(_tripId, _stopId, _evTime);
         if (sched > 0) { delaySec = _evTime - sched; useIt = true; }
       }
       else if (_evHasData) { delaySec = 0; useIt = true; }
