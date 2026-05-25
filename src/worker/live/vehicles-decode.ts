@@ -1,16 +1,17 @@
 /**
- * Minimal hand-written GTFS-RT decoder for VehiclePosition feed.
- * Verified against pbf library output — all 247 vehicles match exactly.
+ * pbf-based GTFS-RT decoder for VehiclePosition feed.
+ * Mirrors the pattern in decode.ts — module-scope state, readFields/readMessage.
  *
- * VehiclePosition field tags (field << 3 | wire_type):
- *   FeedMessage.entity           field 2 wire 2 → 0x12
- *   FeedEntity.vehicle           field 4 wire 2 → 0x22
- *   VehiclePosition.trip         field 1 wire 2 → 0x0a
- *   VehiclePosition.current_status field 4 wire 0 → 0x20
- *   VehiclePosition.timestamp    field 5 wire 0 → 0x28
- *   VehiclePosition.stop_id      field 7 wire 2 → 0x3a
- *   TripDescriptor.trip_id       field 1 wire 2 → 0x0a
+ * VehiclePosition field numbers:
+ *   FeedEntity.vehicle           = 4
+ *   VehiclePosition.trip         = 1  (TripDescriptor)
+ *   VehiclePosition.current_status = 4
+ *   VehiclePosition.timestamp    = 5
+ *   VehiclePosition.stop_id      = 7
+ *   TripDescriptor.trip_id       = 1
  */
+
+import Pbf from "pbf";
 
 export interface VehicleEvent {
   tripId: string;
@@ -20,80 +21,46 @@ export interface VehicleEvent {
   timestamp: number;
 }
 
-const r = {
-  buf: new Uint8Array(0) as Uint8Array,
-  pos: 0,
+const _td = new TextDecoder();
 
-  varint(): number {
-    let b = this.buf[this.pos++];
-    if (!(b & 0x80)) return b;
-    let res = b & 0x7f;
-    b = this.buf[this.pos++]; res |= (b & 0x7f) << 7;
-    if (!(b & 0x80)) return res;
-    b = this.buf[this.pos++]; res |= (b & 0x7f) << 14;
-    if (!(b & 0x80)) return res;
-    b = this.buf[this.pos++]; res |= (b & 0x7f) << 21;
-    if (!(b & 0x80)) return res;
-    b = this.buf[this.pos++]; res += (b & 0x7f) * 268435456;
-    if (!(b & 0x80)) return res;
-    while (this.buf[this.pos++] & 0x80);
-    return res;
-  },
+let _tripId = "";
+let _stopId = "";
+let _status = 2;
+let _timestamp = 0;
+let _out: VehicleEvent[];
 
-  skip(wtype: number): void {
-    if (wtype === 0) { while (this.buf[this.pos++] & 0x80); }
-    else if (wtype === 2) { const n = this.varint(); this.pos += n; }
-    else if (wtype === 1) { this.pos += 8; }
-    else if (wtype === 5) { this.pos += 4; }
-  },
-};
+function readString(pbf: Pbf): string {
+  const len = pbf.readVarint();
+  const s = pbf.pos;
+  pbf.pos = s + len;
+  return _td.decode((pbf.buf as Uint8Array).subarray(s, s + len));
+}
 
-const td = new TextDecoder();
+function readTD(tag: number, _: null, pbf: Pbf): void {
+  if (tag === 1) _tripId = readString(pbf); // trip_id
+}
+
+function readVP(tag: number, _: null, pbf: Pbf): void {
+  if (tag === 1)      pbf.readMessage(readTD, null);   // trip
+  else if (tag === 4) _status    = pbf.readVarint();   // current_status
+  else if (tag === 5) _timestamp = pbf.readVarint();   // timestamp
+  else if (tag === 7) _stopId    = readString(pbf);    // stop_id
+}
+
+function readEntity(tag: number, _: null, pbf: Pbf): void {
+  if (tag !== 4) return; // vehicle
+  _tripId = ""; _stopId = ""; _status = 2; _timestamp = 0;
+  pbf.readMessage(readVP, null);
+  if (_tripId && _stopId) _out.push({ tripId: _tripId, stopId: _stopId, status: _status, timestamp: _timestamp });
+}
+
+function readFeed(tag: number, _: null, pbf: Pbf): void {
+  if (tag === 2) pbf.readMessage(readEntity, null); // entity
+}
 
 export function decodeVehiclePositions(buf: Uint8Array): VehicleEvent[] {
-  r.buf = buf; r.pos = 0;
-  const out: VehicleEvent[] = [];
-  const len = buf.length;
-
-  while (r.pos < len) {
-    const t = buf[r.pos++];
-    if (t === 0x12) { // FeedEntity
-      const entityLen = r.varint(); const entityEnd = r.pos + entityLen;
-      while (r.pos < entityEnd) {
-        const te = buf[r.pos++];
-        if (te === 0x22) { // VehiclePosition
-          const vpLen = r.varint(); const vpEnd = r.pos + vpLen;
-          let tripId = "", stopId = "", status = 2, timestamp = 0;
-
-          while (r.pos < vpEnd) {
-            const tv = buf[r.pos++];
-            if (tv === 0x0a) { // TripDescriptor
-              const tdLen = r.varint(); const tdEnd = r.pos + tdLen;
-              while (r.pos < tdEnd) {
-                const tf = buf[r.pos++];
-                if (tf === 0x0a) {
-                  const vlen = r.varint();
-                  tripId = td.decode(buf.subarray(r.pos, r.pos + vlen));
-                  r.pos += vlen;
-                } else { r.skip(tf & 7); }
-              }
-              r.pos = tdEnd;
-            } else if (tv === 0x3a) { // stop_id (field 7)
-              const vlen = r.varint();
-              stopId = td.decode(buf.subarray(r.pos, r.pos + vlen));
-              r.pos += vlen;
-            } else if (tv === 0x20) { status = r.varint(); }    // current_status (field 4)
-            else if (tv === 0x28) { timestamp = r.varint(); }   // timestamp (field 5)
-            else { r.skip(tv & 7); }
-          }
-
-          if (tripId && stopId) out.push({ tripId, stopId, status, timestamp });
-          r.pos = vpEnd;
-        } else { r.skip(te & 7); }
-      }
-      r.pos = entityEnd;
-    } else { r.skip(t & 7); }
-  }
-
-  return out;
+  _out = [];
+  const pbf = new Pbf(buf);
+  pbf.readFields(readFeed, null);
+  return _out;
 }
