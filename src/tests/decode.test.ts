@@ -140,4 +140,19 @@ describe.skipIf(!_firstTrip)("decodeFeedMessage — time-based delay derivation"
     const { stopOverrides } = decodeFeedMessage(buf);
     expect(stopOverrides.has("trip_not_in_offsets")).toBe(false);
   });
+
+  it("schedule_relationship=CANCELED before trip_id in TripDescriptor → tripStatus=3", () => {
+    // Protobuf field order is arbitrary; schedule_relationship (field 4) may precede trip_id (field 1).
+    // Build a TripDescriptor with the fields in reversed order.
+    const tripDescReversed = [
+      ...field_var(4, 3),            // schedule_relationship = CANCELED first
+      ...field_str(1, TEST_TRIP_ID), // trip_id second
+    ];
+    const tu = field_len(1, tripDescReversed); // TripUpdate with just a trip descriptor
+    const entity = [...field_str(1, "test_reversed"), ...field_len(3, tu)];
+    const buf = new Uint8Array(field_len(2, entity));
+
+    const { tripStatus } = decodeFeedMessage(buf);
+    expect(tripStatus.get(TEST_TRIP_ID)).toBe(3);
+  });
 });

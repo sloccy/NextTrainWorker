@@ -32,6 +32,18 @@ const ROUTE_DICT: string[] = (() => {
   return dict;
 })();
 
+function bestOff(offs: Uint32Array, evTime: number): number {
+  if (offs.length === 1) return offs[0];
+  let best = offs[0];
+  let bestDiff = Infinity;
+  for (let i = 0; i < offs.length; i++) {
+    const monoMins = TEMPLATE_BYTES[offs[i] - 2] | (TEMPLATE_BYTES[offs[i] - 1] << 8);
+    const diff = Math.abs(evTime - (BASE_MIDNIGHT_UTC + monoMins * 60));
+    if (diff < bestDiff) { bestDiff = diff; best = offs[i]; }
+  }
+  return best;
+}
+
 export async function recordOtpObservations(env: Env, events: VehicleEvent[]): Promise<{ inserted: number; batches: number }> {
   const stoppedAt = events.filter(e => e.status === 1); // STOPPED_AT only
   if (stoppedAt.length === 0) return { inserted: 0, batches: 0 };
@@ -49,7 +61,7 @@ export async function recordOtpObservations(env: Env, events: VehicleEvent[]): P
     const offs = stopMap.get(ev.stopId);
     if (!offs || offs.length === 0) continue; // stop not in schedule
 
-    const off = offs[0];
+    const off = bestOff(offs, ev.timestamp);
     const routeIdx = TEMPLATE_BYTES[off - 4];
     const dirCode  = TEMPLATE_BYTES[off - 3];
     const monoMins = TEMPLATE_BYTES[off - 2] | (TEMPLATE_BYTES[off - 1] << 8);
