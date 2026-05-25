@@ -47,7 +47,8 @@ function parseVpMap(bin: Uint8Array): Map<number, { schedMins: number; stopId: s
 }
 
 /** Find the current stop for the train approaching this station entry.
- *  Returns empty string if no VP data available. */
+ *  Consumes the matched VP entry so the same vehicle can't bleed to a later
+ *  train on the same route+direction. Returns empty string if no VP available. */
 function findCurrentStop(
   vpMap: Map<number, { schedMins: number; stopId: string }[]>,
   routeIdx: number,
@@ -56,15 +57,17 @@ function findCurrentStop(
 ): string {
   const vps = vpMap.get((routeIdx << 8) | dirCode);
   if (!vps) return "";
-  let bestMins = -1;
-  let bestStop = "";
-  for (const vp of vps) {
-    if (vp.schedMins <= stationMonoMins && vp.schedMins > bestMins) {
-      bestMins = vp.schedMins;
-      bestStop = vp.stopId;
+  let bestIdx = -1, bestMins = -1;
+  for (let i = 0; i < vps.length; i++) {
+    if (vps[i].schedMins <= stationMonoMins && vps[i].schedMins > bestMins) {
+      bestMins = vps[i].schedMins;
+      bestIdx = i;
     }
   }
-  return bestStop;
+  if (bestIdx < 0) return "";
+  const stopId = vps[bestIdx].stopId;
+  vps.splice(bestIdx, 1);
+  return stopId;
 }
 
 export function scanArrivalsBin(
