@@ -30,7 +30,7 @@ export default {
       const t = Date.now();
       await handleRefreshLive(env, ctx);
       console.log(`[cron-a] live=${Date.now() - t}ms`);
-    } else if (event.cron === "*/3 * * * *") {
+    } else if (event.cron === "*/1 * * * *") {
       const tStart = Date.now();
       const [alertsMs, otpMs] = await Promise.all([
         timed(() => handleRefreshAlerts(env, ctx)),

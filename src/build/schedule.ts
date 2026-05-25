@@ -18,6 +18,7 @@ export interface BuiltSchedule {
   templateBin: Uint8Array;
   tripOffsets: Map<string, number[]>;
   stopOffsets: Map<string, Map<string, number[]>>;
+  stopToSlug: Map<string, string>;
   stationsBin: Uint8Array;
   routeIdToShortName: Map<string, string>;
 }
@@ -272,7 +273,7 @@ export async function buildSchedule(): Promise<BuiltSchedule> {
   }
   const stationsBin = buildStationsBin(stationEntries, generatedAt);
 
-  return { generatedAt, templateBin, tripOffsets, stopOffsets, stationsBin, routeIdToShortName: routeShortName };
+  return { generatedAt, templateBin, tripOffsets, stopOffsets, stopToSlug, stationsBin, routeIdToShortName: routeShortName };
 }
 
 function stripRoutePrefix(headsign: string, route: string): string {
