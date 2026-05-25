@@ -19,7 +19,7 @@ export async function getBinFromCache(name: string): Promise<Uint8Array | null> 
 }
 
 export function putBinInCache(ctx: ExecutionContext, name: string, buf: Uint8Array, ttlSec: number): void {
-  const res = new Response(buf.slice().buffer, {
+  const res = new Response(buf, {
     headers: {
       "Content-Type": "application/octet-stream",
       "Cache-Control": `public, max-age=${ttlSec}`,
