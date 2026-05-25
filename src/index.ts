@@ -33,6 +33,15 @@ export default {
       await handleOtpRollup(env);
       return;
     }
+
+    if (event.cron === "*/2 * * * *") {
+      // OTP-only tick every 2 minutes — keeps per-minute CPU under 10ms free-tier budget.
+      const vpResult = await fetchVehiclePositions();
+      await handleRefreshOtp(env, ctx, vpResult);
+      return;
+    }
+
+    // Per-minute tick: live arrivals + alerts
     const tStart = Date.now();
     const [tripResult, vpResult, alertsResult] = await Promise.all([
       fetchTripUpdates(),
@@ -40,11 +49,10 @@ export default {
       fetchAlerts(),
     ]);
     const tFetched = Date.now();
-    const [liveMs, alertsMs, otpMs] = await Promise.all([
+    const [liveMs, alertsMs] = await Promise.all([
       timed(() => handleRefreshLive(env, ctx, tripResult, vpResult)),
       timed(() => handleRefreshAlerts(env, ctx, alertsResult)),
-      timed(() => handleRefreshOtp(env, ctx, vpResult)),
     ]);
-    console.log(`[cron] fetch=${tFetched - tStart}ms live=${liveMs}ms alerts=${alertsMs}ms otp=${otpMs}ms total=${Date.now() - tStart}ms`);
+    console.log(`[cron] fetch=${tFetched - tStart}ms live=${liveMs}ms alerts=${alertsMs}ms total=${Date.now() - tStart}ms`);
   },
 };
