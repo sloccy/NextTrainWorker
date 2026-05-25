@@ -48,6 +48,8 @@ let _entityMissed = 0;
 let _missedSamples: Set<string> = new Set();
 let _tripId = "";
 let _skipTrip = false;
+let _tdTripId = "";
+let _tdSchedRel = -1;
 let _curOuter: Map<string, number> | null = null;
 let _stopId = "";
 let _schedRel = 0;
@@ -87,18 +89,21 @@ function readTD(tag: number, _: null, pbf: Pbf): void {
     const s = pbf.pos;
     const h = fnv1a(pbf.buf as Uint8Array, s, s + len);
     pbf.pos = s + len;
-    _tripId = TRIP_HASH.get(h) ?? "";
-  } else if (tag === 4) _ts.set(_tripId, pbf.readVarint(true));
+    _tdTripId = TRIP_HASH.get(h) ?? "";
+  } else if (tag === 4) {
+    _tdSchedRel = pbf.readVarint(true);
+  }
 }
 
 function readTU(tag: number, _: null, pbf: Pbf): void {
   if (tag === 1) {
-    _tripId = "";
+    _tdTripId = ""; _tdSchedRel = -1;
     _skipTrip = false;
     pbf.readMessage(readTD, null);
-    if (!_ts.has(_tripId)) _ts.set(_tripId, 0);
+    _tripId = _tdTripId;
+    _ts.set(_tripId, _tdSchedRel >= 0 ? _tdSchedRel : 0);
     // canceled trips handled at trip level in patch — per-stop overrides redundant
-    if (_ts.get(_tripId) === 3) _skipTrip = true;
+    if (_tdSchedRel === 3) _skipTrip = true;
     _curOuter = null;
   } else if (tag === 2) {
     if (_skipTrip) { pbf.readMessage(noop, null); return; }

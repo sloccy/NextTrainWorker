@@ -185,7 +185,7 @@ export function scanArrivalsBin(
   res[wp++] = outCount;
   for (let i = 0; i < outCount; i++) {
     const { dOff, dLen, dirCode, predictedMins, delayStatus } = entries[i];
-    const timeMins = predictedMins % 1440;
+    const timeMins = ((predictedMins % 1440) + 1440) % 1440;
     res[wp++] = dLen;
     for (let k = 0; k < dLen; k++) res[wp++] = bin[dOff + k];
     res[wp++] = dirCode;
