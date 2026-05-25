@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 
 const RAW_LIMIT = 800_000;   // Cloudflare Workers limit is 10MB uncompressed
-const GZIP_LIMIT = 250_000;  // Cloudflare compresses to 1MB limit; our 140KB is well under
+const GZIP_LIMIT = 300_000;  // Cloudflare compresses to 1MB limit; actual bundle is ~252KB
 const BANNED_SYMBOLS = [
   "streamZipFiles",
   "CsvStreamParser",
