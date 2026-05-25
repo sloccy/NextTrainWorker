@@ -23,14 +23,55 @@ const _td = new TextDecoder();
 // Precompute the set of all known rail short names for wildcard fan-out.
 const ALL_SHORT_NAMES: ReadonlySet<string> = new Set(Object.values(ROUTE_ID_TO_SHORT_NAME));
 
-function w8(buf: number[], v: number): void { buf.push(v & 0xFF); }
-function w16(buf: number[], v: number): void { buf.push(v & 0xFF, (v >>> 8) & 0xFF); }
-function w32(buf: number[], v: number): void {
-  buf.push(v & 0xFF, (v >>> 8) & 0xFF, (v >>> 16) & 0xFF, (v >>> 24) & 0xFF);
+class BufWriter {
+  private buf: Uint8Array;
+  private pos = 0;
+
+  constructor(initial = 512) {
+    this.buf = new Uint8Array(initial);
+  }
+
+  private grow(needed: number): void {
+    if (this.pos + needed <= this.buf.length) return;
+    let cap = this.buf.length;
+    while (cap < this.pos + needed) cap *= 2;
+    const next = new Uint8Array(cap);
+    next.set(this.buf.subarray(0, this.pos));
+    this.buf = next;
+  }
+
+  writeU8(v: number): void {
+    this.grow(1);
+    this.buf[this.pos++] = v & 0xFF;
+  }
+
+  writeU16(v: number): void {
+    this.grow(2);
+    this.buf[this.pos++] = v & 0xFF;
+    this.buf[this.pos++] = (v >>> 8) & 0xFF;
+  }
+
+  writeU32(v: number): void {
+    this.grow(4);
+    this.buf[this.pos++] = v & 0xFF;
+    this.buf[this.pos++] = (v >>> 8) & 0xFF;
+    this.buf[this.pos++] = (v >>> 16) & 0xFF;
+    this.buf[this.pos++] = (v >>> 24) & 0xFF;
+  }
+
+  writeBytes(bytes: Uint8Array): void {
+    this.grow(bytes.length);
+    this.buf.set(bytes, this.pos);
+    this.pos += bytes.length;
+  }
+
+  finish(): Uint8Array {
+    return this.buf.subarray(0, this.pos);
+  }
 }
 
 export function buildAlertsBin(alerts: ParsedAlert[], generatedAt: number): Uint8Array {
-  const byRoute = new Map<string, ParsedAlert[]>();
+  const byRoute = new Map<string, Set<ParsedAlert>>();
 
   for (const alert of alerts) {
     if (alert.cause === 9 || alert.activeFrom === 0) continue;
@@ -47,8 +88,8 @@ export function buildAlertsBin(alerts: ParsedAlert[], generatedAt: number): Uint
     }
     for (const sn of shortNames) {
       let bucket = byRoute.get(sn);
-      if (!bucket) { bucket = []; byRoute.set(sn, bucket); }
-      bucket.push(alert);
+      if (!bucket) { bucket = new Set(); byRoute.set(sn, bucket); }
+      bucket.add(alert);
     }
   }
 
@@ -58,37 +99,38 @@ export function buildAlertsBin(alerts: ParsedAlert[], generatedAt: number): Uint
     byRoute.delete("*");
     for (const sn of ALL_SHORT_NAMES) {
       let bucket = byRoute.get(sn);
-      if (!bucket) { bucket = []; byRoute.set(sn, bucket); }
-      for (const a of wildcardAlerts) if (!bucket.includes(a)) bucket.push(a);
+      if (!bucket) { bucket = new Set(); byRoute.set(sn, bucket); }
+      for (const a of wildcardAlerts) bucket.add(a);
     }
   }
 
   const routeNames = [...byRoute.keys()].sort();
-  const buf: number[] = [];
-  w32(buf, generatedAt);
-  w8(buf, Math.min(routeNames.length, 255));
+  const w = new BufWriter();
+  w.writeU32(generatedAt);
+  w.writeU8(Math.min(routeNames.length, 255));
 
   for (const routeName of routeNames) {
-    const bucket = byRoute.get(routeName) ?? [];
-    const nameBytes = routeName.length & 0xFF;
-    buf.push(nameBytes);
-    for (let i = 0; i < routeName.length; i++) buf.push(routeName.charCodeAt(i) & 0xFF);
-    w8(buf, Math.min(bucket.length, 255));
+    const bucket = byRoute.get(routeName) ?? new Set<ParsedAlert>();
+    const nameBytes = _te.encode(routeName);
+    w.writeU8(nameBytes.length & 0xFF);
+    w.writeBytes(nameBytes);
+    w.writeU8(Math.min(bucket.size, 255));
     for (const alert of bucket) {
-      w32(buf, alert.activeFrom);
-      w32(buf, alert.activeUntil);
-      w8(buf, alert.cause);
-      w8(buf, alert.effect);
+      w.writeU32(alert.activeFrom);
+      w.writeU32(alert.activeUntil);
+      w.writeU8(alert.cause);
+      w.writeU8(alert.effect);
       const hBytes = _te.encode(alert.header.slice(0, 200));
-      w8(buf, Math.min(hBytes.length, 255));
-      for (const b of hBytes) buf.push(b);
+      w.writeU8(Math.min(hBytes.length, 255));
+      w.writeBytes(hBytes.subarray(0, 255));
       const dBytes = _te.encode(alert.description.slice(0, 512));
-      w16(buf, Math.min(dBytes.length, 65535));
-      for (const b of dBytes) buf.push(b);
+      const dLen = Math.min(dBytes.length, 65535);
+      w.writeU16(dLen);
+      w.writeBytes(dBytes.subarray(0, dLen));
     }
   }
 
-  return new Uint8Array(buf);
+  return w.finish();
 }
 
 /** Returns encoded response bytes for the /al (no route) summary. */
