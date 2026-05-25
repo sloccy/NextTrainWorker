@@ -67,21 +67,24 @@ export async function recordOtpObservations(env: Env, events: VehicleEvent[]): P
 
   if (rows.length === 0) return { inserted: 0, batches: 0 };
 
-  // Single multi-row INSERT per chunk of 50 rows (50 × 8 = 400 params, safely under D1 limit).
-  const CHUNK = 50;
-  let batches = 0;
+  // Multi-row INSERT chunks — D1 caps bound params at 100 per statement.
+  // 10 rows × 8 cols = 80 params, safely under the limit.
+  // Wrap all chunks in a single batch() call for one HTTP round trip.
+  const CHUNK = 10;
+  const stmts: D1PreparedStatement[] = [];
   for (let i = 0; i < rows.length; i += CHUNK) {
     const chunk = rows.slice(i, i + CHUNK);
     const placeholders = chunk.map(() => "(?,?,?,?,?,?,?,?)").join(",");
-    const params = chunk.flat();
-    await env.OTP_DB.prepare(
-      `INSERT OR IGNORE INTO otp_observations
-       (date, trip_hash, stop_id_hash, observed_at, scheduled_at, delay_seconds, route, direction)
-       VALUES ${placeholders}`,
-    ).bind(...params).run();
-    batches++;
+    stmts.push(
+      env.OTP_DB.prepare(
+        `INSERT OR IGNORE INTO otp_observations
+         (date, trip_hash, stop_id_hash, observed_at, scheduled_at, delay_seconds, route, direction)
+         VALUES ${placeholders}`,
+      ).bind(...chunk.flat()),
+    );
   }
-  return { inserted: rows.length, batches };
+  await env.OTP_DB.batch(stmts);
+  return { inserted: rows.length, batches: stmts.length };
 }
 
 export async function rollupOtpDaily(env: Env): Promise<{ inserted: number; deleted: number }> {
