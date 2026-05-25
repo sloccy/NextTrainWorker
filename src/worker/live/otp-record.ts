@@ -13,11 +13,9 @@
 import type { Env } from "../types.js";
 import { TEMPLATE_BYTES, STOP_OFFSETS } from "../generated/offsets.js";
 import type { VehicleEvent } from "./vehicles-decode.js";
-import { fnv1a } from "./key-hash.js";
-
-const BASE_MIDNIGHT_UTC =
-  (TEMPLATE_BYTES[4] | (TEMPLATE_BYTES[5] << 8) |
-   (TEMPLATE_BYTES[6] << 16) | (TEMPLATE_BYTES[7] << 24)) >>> 0;
+import { hashStr } from "./key-hash.js";
+import { BASE_MIDNIGHT_UTC } from "../util/base-time.js";
+import { denverFmt } from "../util/denver-date.js";
 
 // Decode route name dictionary from TEMPLATE_BYTES once at module load.
 // Layout at offset 8: [u16 dict_count] × ([u8 len][chars])
@@ -34,18 +32,9 @@ const ROUTE_DICT: string[] = (() => {
   return dict;
 })();
 
-const enc = new TextEncoder();
-
-function hashStr(s: string): number {
-  const b = enc.encode(s);
-  return fnv1a(b, 0, b.length);
-}
-
-const denverFmt = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Denver" });
-
-export async function recordOtpObservations(env: Env, events: VehicleEvent[]): Promise<void> {
+export async function recordOtpObservations(env: Env, events: VehicleEvent[]): Promise<{ inserted: number; batches: number }> {
   const stoppedAt = events.filter(e => e.status === 1); // STOPPED_AT only
-  if (stoppedAt.length === 0) return;
+  if (stoppedAt.length === 0) return { inserted: 0, batches: 0 };
 
   const stmts: D1PreparedStatement[] = [];
 
@@ -82,19 +71,21 @@ export async function recordOtpObservations(env: Env, events: VehicleEvent[]): P
     );
   }
 
-  if (stmts.length === 0) return;
+  if (stmts.length === 0) return { inserted: 0, batches: 0 };
 
-  // D1 batch — up to 100 statements per call
+  let batches = 0;
   for (let i = 0; i < stmts.length; i += 100) {
     await env.OTP_DB.batch(stmts.slice(i, i + 100));
+    batches++;
   }
+  return { inserted: stmts.length, batches };
 }
 
-export async function rollupOtpDaily(env: Env): Promise<void> {
-  // yesterday in Denver (cron fires at 10 UTC = 4am Denver)
+export async function rollupOtpDaily(env: Env): Promise<{ inserted: number; deleted: number }> {
   const yesterday = denverFmt.format(new Date(Date.now() - 86_400_000));
+  const cutoff    = denverFmt.format(new Date(Date.now() - 30 * 86_400_000));
 
-  await env.OTP_DB.batch([
+  const results = await env.OTP_DB.batch([
     env.OTP_DB.prepare(`
       INSERT OR IGNORE INTO otp_daily (date, route, direction, observations, on_time, late, very_late)
       SELECT date, route, direction,
@@ -109,6 +100,11 @@ export async function rollupOtpDaily(env: Env): Promise<void> {
     env.OTP_DB.prepare(`
       DELETE FROM otp_observations
       WHERE date < ?
-    `).bind(denverFmt.format(new Date(Date.now() - 30 * 86_400_000))),
+    `).bind(cutoff),
   ]);
+
+  return {
+    inserted: results[0].meta.rows_written ?? 0,
+    deleted: results[1].meta.rows_written ?? 0,
+  };
 }

@@ -1,6 +1,6 @@
 {
-  "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
-  "organizeImports": { "enabled": true },
+  "$schema": "https://biomejs.dev/schemas/2.4.14/schema.json",
+  "assist": { "actions": { "source": { "organizeImports": "on" } } },
   "formatter": {
     "enabled": true,
     "indentStyle": "space",
@@ -32,7 +32,7 @@
   },
   "overrides": [
     {
-      "include": ["src/worker/live/**", "src/worker/handlers/**", "src/worker/binary/**"],
+      "includes": ["**/src/worker/live/**", "**/src/worker/handlers/**", "**/src/worker/binary/**"],
       "linter": {
         "rules": {
           "complexity": {
@@ -42,7 +42,7 @@
       }
     },
     {
-      "include": ["src/build/**", "scripts/**"],
+      "includes": ["**/src/build/**", "**/scripts/**"],
       "linter": {
         "rules": {
           "suspicious": { "noExplicitAny": "off" },
@@ -51,7 +51,7 @@
       }
     },
     {
-      "include": ["src/tests/**"],
+      "includes": ["**/src/tests/**"],
       "linter": {
         "rules": {
           "suspicious": { "noExplicitAny": "off" },

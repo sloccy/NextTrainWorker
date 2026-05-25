@@ -17,16 +17,11 @@ import type { ParsedAlert } from "../live/alerts-decode.js";
 import { ROUTE_ID_TO_SHORT_NAME } from "../route-ids.js";
 
 const RAIL_TYPES = new Set([0, 2]);
+const _te = new TextEncoder();
+const _td = new TextDecoder();
 
-export interface AlertSummaryEntry { route: string; count: number; }
-export interface AlertDetail {
-  activeFrom: number;
-  activeUntil: number;
-  cause: number;
-  effect: number;
-  header: string;
-  description: string;
-}
+// Precompute the set of all known rail short names for wildcard fan-out.
+const ALL_SHORT_NAMES: ReadonlySet<string> = new Set(Object.values(ROUTE_ID_TO_SHORT_NAME));
 
 function w8(buf: number[], v: number): void { buf.push(v & 0xFF); }
 function w16(buf: number[], v: number): void { buf.push(v & 0xFF, (v >>> 8) & 0xFF); }
@@ -61,8 +56,7 @@ export function buildAlertsBin(alerts: ParsedAlert[], generatedAt: number): Uint
   const wildcardAlerts = byRoute.get("*");
   if (wildcardAlerts) {
     byRoute.delete("*");
-    const allShortNames = new Set(Object.values(ROUTE_ID_TO_SHORT_NAME));
-    for (const sn of allShortNames) {
+    for (const sn of ALL_SHORT_NAMES) {
       let bucket = byRoute.get(sn);
       if (!bucket) { bucket = []; byRoute.set(sn, bucket); }
       for (const a of wildcardAlerts) if (!bucket.includes(a)) bucket.push(a);
@@ -75,7 +69,7 @@ export function buildAlertsBin(alerts: ParsedAlert[], generatedAt: number): Uint
   w8(buf, Math.min(routeNames.length, 255));
 
   for (const routeName of routeNames) {
-    const bucket = byRoute.get(routeName)!;
+    const bucket = byRoute.get(routeName) ?? [];
     const nameBytes = routeName.length & 0xFF;
     buf.push(nameBytes);
     for (let i = 0; i < routeName.length; i++) buf.push(routeName.charCodeAt(i) & 0xFF);
@@ -85,10 +79,10 @@ export function buildAlertsBin(alerts: ParsedAlert[], generatedAt: number): Uint
       w32(buf, alert.activeUntil);
       w8(buf, alert.cause);
       w8(buf, alert.effect);
-      const hBytes = new TextEncoder().encode(alert.header.slice(0, 200));
+      const hBytes = _te.encode(alert.header.slice(0, 200));
       w8(buf, Math.min(hBytes.length, 255));
       for (const b of hBytes) buf.push(b);
-      const dBytes = new TextEncoder().encode(alert.description.slice(0, 512));
+      const dBytes = _te.encode(alert.description.slice(0, 512));
       w16(buf, Math.min(dBytes.length, 65535));
       for (const b of dBytes) buf.push(b);
     }
@@ -97,19 +91,19 @@ export function buildAlertsBin(alerts: ParsedAlert[], generatedAt: number): Uint
   return new Uint8Array(buf);
 }
 
-export function scanAlertsSummary(bin: Uint8Array): { generatedAt: number; routes: AlertSummaryEntry[] } | null {
+/** Returns encoded response bytes for the /al (no route) summary. */
+export function scanAlertsSummaryBytes(bin: Uint8Array): Uint8Array | null {
   if (bin.length < 5) return null;
-  let pos = 0;
-  const generatedAt = (bin[pos++] | (bin[pos++] << 8) | (bin[pos++] << 16) | (bin[pos++] << 24)) >>> 0;
+  let pos = 4; // skip generated_at
   const routeCount = bin[pos++];
-  const routes: AlertSummaryEntry[] = [];
+  const out: number[] = [routeCount];
 
   for (let i = 0; i < routeCount; i++) {
     const nlen = bin[pos++];
-    let route = "";
-    for (let j = 0; j < nlen; j++) route += String.fromCharCode(bin[pos++]);
+    out.push(nlen);
+    for (let j = 0; j < nlen; j++) out.push(bin[pos++]);
     const alertCount = bin[pos++];
-    routes.push({ route, count: alertCount });
+    out.push(alertCount);
     for (let j = 0; j < alertCount; j++) {
       pos += 10; // active_from u32 + active_until u32 + cause u8 + effect u8
       const hlen = bin[pos++]; pos += hlen;
@@ -117,16 +111,16 @@ export function scanAlertsSummary(bin: Uint8Array): { generatedAt: number; route
     }
   }
 
-  return { generatedAt, routes };
+  return new Uint8Array(out);
 }
 
-export function scanAlertsByRoute(
+/** Returns encoded response bytes for the /al?r=ROUTE detail view. */
+export function scanAlertsByRouteBytes(
   bin: Uint8Array,
   targetRoute: string,
-): { generatedAt: number; alerts: AlertDetail[] } | null {
+): Uint8Array | null {
   if (bin.length < 5) return null;
-  let pos = 0;
-  const generatedAt = (bin[pos++] | (bin[pos++] << 8) | (bin[pos++] << 16) | (bin[pos++] << 24)) >>> 0;
+  let pos = 4; // skip generated_at
   const routeCount = bin[pos++];
 
   for (let i = 0; i < routeCount; i++) {
@@ -144,20 +138,34 @@ export function scanAlertsByRoute(
       continue;
     }
 
-    const alerts: AlertDetail[] = [];
-    const td = new TextDecoder();
+    const out: number[] = [alertCount];
     for (let j = 0; j < alertCount; j++) {
       const activeFrom  = (bin[pos++] | (bin[pos++] << 8) | (bin[pos++] << 16) | (bin[pos++] << 24)) >>> 0;
       const activeUntil = (bin[pos++] | (bin[pos++] << 8) | (bin[pos++] << 16) | (bin[pos++] << 24)) >>> 0;
       const cause  = bin[pos++];
       const effect = bin[pos++];
       const hlen   = bin[pos++];
-      const header = td.decode(bin.subarray(pos, pos + hlen)); pos += hlen;
+      const header = _td.decode(bin.subarray(pos, pos + hlen)); pos += hlen;
       const dlen   = bin[pos++] | (bin[pos++] << 8);
-      const description = td.decode(bin.subarray(pos, pos + dlen)); pos += dlen;
-      alerts.push({ activeFrom, activeUntil, cause, effect, header, description });
+      const description = _td.decode(bin.subarray(pos, pos + dlen)); pos += dlen;
+
+      out.push(
+        activeFrom & 0xFF, (activeFrom >>> 8) & 0xFF,
+        (activeFrom >>> 16) & 0xFF, (activeFrom >>> 24) & 0xFF,
+        activeUntil & 0xFF, (activeUntil >>> 8) & 0xFF,
+        (activeUntil >>> 16) & 0xFF, (activeUntil >>> 24) & 0xFF,
+        cause & 0xFF,
+        effect & 0xFF,
+      );
+      const hb = _te.encode(header);
+      out.push(Math.min(hb.length, 255));
+      for (const b of hb.subarray(0, 255)) out.push(b);
+      const db = _te.encode(description);
+      const dbLen = Math.min(db.length, 65535);
+      out.push(dbLen & 0xFF, (dbLen >>> 8) & 0xFF);
+      for (const b of db.subarray(0, dbLen)) out.push(b);
     }
-    return { generatedAt, alerts };
+    return new Uint8Array(out);
   }
 
   return null;
