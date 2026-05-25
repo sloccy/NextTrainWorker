@@ -9,12 +9,8 @@
 import Pbf from "pbf";
 import { TEMPLATE_BYTES, TRIP_OFFSETS, STOP_OFFSETS } from "../generated/offsets.js";
 import { TRIP_HASH, STOP_HASH, fnv1a } from "./key-hash.js";
-
-const BASE_MIDNIGHT_UTC =
-  (TEMPLATE_BYTES[4]
-  | (TEMPLATE_BYTES[5] << 8)
-  | (TEMPLATE_BYTES[6] << 16)
-  | (TEMPLATE_BYTES[7] << 24)) >>> 0;
+import { noop } from "./pbf-util.js";
+import { BASE_MIDNIGHT_UTC } from "../util/base-time.js";
 
 function stopSchedSec(tripId: string, stopId: string): number {
   const inner = STOP_OFFSETS.get(tripId);
@@ -161,8 +157,6 @@ function readEntity(tag: number, _: null, pbf: Pbf): void {
 function readFeed(tag: number, _: null, pbf: Pbf): void {
   if (tag === 2) pbf.readMessage(readEntity, null);
 }
-
-function noop(_tag: number, _result: null, _pbf: Pbf): void {}
 
 // ── public API ────────────────────────────────────────────────────────────────
 

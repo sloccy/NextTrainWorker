@@ -12,6 +12,7 @@
  */
 
 import Pbf from "pbf";
+import { readString } from "./pbf-util.js";
 
 export interface VehicleEvent {
   tripId: string;
@@ -21,20 +22,11 @@ export interface VehicleEvent {
   timestamp: number;
 }
 
-const _td = new TextDecoder();
-
 let _tripId = "";
 let _stopId = "";
-let _status = 2;
+let _status = 0;
 let _timestamp = 0;
 let _out: VehicleEvent[];
-
-function readString(pbf: Pbf): string {
-  const len = pbf.readVarint();
-  const s = pbf.pos;
-  pbf.pos = s + len;
-  return _td.decode((pbf.buf as Uint8Array).subarray(s, s + len));
-}
 
 function readTD(tag: number, _: null, pbf: Pbf): void {
   if (tag === 1) _tripId = readString(pbf); // trip_id
