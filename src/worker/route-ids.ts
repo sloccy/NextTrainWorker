@@ -13,5 +13,5 @@ export const ROUTE_ID_TO_SHORT_NAME: Readonly<Record<string, string>> = {
   "101T": "T",
   "103W": "W",
   "117N": "N",
-  "A": "A",
+  "A": "A"
 };
