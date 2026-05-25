@@ -36,7 +36,11 @@ export async function recordOtpObservations(env: Env, events: VehicleEvent[]): P
   const stoppedAt = events.filter(e => e.status === 1); // STOPPED_AT only
   if (stoppedAt.length === 0) return { inserted: 0, batches: 0 };
 
-  const stmts: D1PreparedStatement[] = [];
+  // Compute date once — all events in a tick share the same Denver date.
+  const date = denverFmt.format(new Date());
+
+  type Row = [string, number, number, number, number, number, string, string];
+  const rows: Row[] = [];
 
   for (const ev of stoppedAt) {
     const stopMap = STOP_OFFSETS.get(ev.tripId);
@@ -58,27 +62,26 @@ export async function recordOtpObservations(env: Env, events: VehicleEvent[]): P
     // Sanity check: ignore if more than 1 hour late or more than 15 min early
     if (delaySec > 3600 || delaySec < -900) continue;
 
-    const date = denverFmt.format(new Date(ev.timestamp * 1000));
-    const tripHash   = hashStr(ev.tripId);
-    const stopIdHash = hashStr(ev.stopId);
-
-    stmts.push(
-      env.OTP_DB.prepare(
-        `INSERT OR IGNORE INTO otp_observations
-         (date, trip_hash, stop_id_hash, observed_at, scheduled_at, delay_seconds, route, direction)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(date, tripHash, stopIdHash, ev.timestamp, scheduledAt, delaySec, route, dir),
-    );
+    rows.push([date, hashStr(ev.tripId), hashStr(ev.stopId), ev.timestamp, scheduledAt, delaySec, route, dir]);
   }
 
-  if (stmts.length === 0) return { inserted: 0, batches: 0 };
+  if (rows.length === 0) return { inserted: 0, batches: 0 };
 
+  // Single multi-row INSERT per chunk of 50 rows (50 × 8 = 400 params, safely under D1 limit).
+  const CHUNK = 50;
   let batches = 0;
-  for (let i = 0; i < stmts.length; i += 100) {
-    await env.OTP_DB.batch(stmts.slice(i, i + 100));
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const chunk = rows.slice(i, i + CHUNK);
+    const placeholders = chunk.map(() => "(?,?,?,?,?,?,?,?)").join(",");
+    const params = chunk.flat();
+    await env.OTP_DB.prepare(
+      `INSERT OR IGNORE INTO otp_observations
+       (date, trip_hash, stop_id_hash, observed_at, scheduled_at, delay_seconds, route, direction)
+       VALUES ${placeholders}`,
+    ).bind(...params).run();
     batches++;
   }
-  return { inserted: stmts.length, batches };
+  return { inserted: rows.length, batches };
 }
 
 export async function rollupOtpDaily(env: Env): Promise<{ inserted: number; deleted: number }> {
