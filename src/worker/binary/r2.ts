@@ -19,6 +19,18 @@ export async function writeArrivalsBin(env: Env, buf: Uint8Array): Promise<void>
   });
 }
 
+export async function getAlertsBin(env: Env): Promise<Uint8Array | null> {
+  const obj = await env.ARRIVALS_R2.get("alerts/current.bin");
+  if (!obj) return null;
+  return new Uint8Array(await obj.arrayBuffer());
+}
+
+export async function writeAlertsBin(env: Env, buf: Uint8Array): Promise<void> {
+  await env.ARRIVALS_R2.put("alerts/current.bin", buf, {
+    httpMetadata: { contentType: "application/octet-stream" },
+  });
+}
+
 export async function getArrivalsBinTiered(
   env: Env,
   ctx: ExecutionContext,
