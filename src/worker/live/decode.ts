@@ -12,6 +12,8 @@ import { TRIP_HASH, STOP_HASH, fnv1a } from "./key-hash.js";
 import { noop } from "./pbf-util.js";
 import { BASE_MIDNIGHT_UTC } from "../util/base-time.js";
 
+const _td = new TextDecoder();
+
 function stopSchedSec(tripId: string, stopId: string): number {
   const inner = STOP_OFFSETS.get(tripId);
   if (!inner) return 0;
@@ -25,6 +27,9 @@ function stopSchedSec(tripId: string, stopId: string): number {
 export interface LiveData {
   tripStatus: Map<string, number>;
   stopOverrides: Map<string, Map<string, number>>;
+  entitySeen: number;
+  entityMissed: number;
+  missedSamples: Set<string>;
 }
 
 // ── module-scope decode state ─────────────────────────────────────────────────
@@ -33,6 +38,9 @@ export interface LiveData {
 
 let _ts: Map<string, number>;
 let _so: Map<string, Map<string, number>>;
+let _entitySeen = 0;
+let _entityMissed = 0;
+let _missedSamples: Set<string> = new Set();
 let _tripId = "";
 let _skipTrip = false;
 let _curOuter: Map<string, number> | null = null;
@@ -118,9 +126,11 @@ function readEntity(tag: number, _: null, pbf: Pbf): void {
   const len = pbf.readVarint();
   const start = pbf.pos;
   const end = start + len;
+  _entitySeen++;
 
   // Peek trip_id (TripDescriptor is field 1; trip_id is field 1 inside it)
   let tripId: string | null = null;
+  let _peekStart = 0, _peekLen = 0;
   outer: while (pbf.pos < end) {
     const v = pbf.readVarint();
     if ((v >> 3) === 1) {
@@ -129,10 +139,10 @@ function readEntity(tag: number, _: null, pbf: Pbf): void {
       while (pbf.pos < subEnd) {
         const sv = pbf.readVarint();
         if ((sv >> 3) === 1) {
-          const slen = pbf.readVarint();
-          const sstart = pbf.pos;
-          const h = fnv1a(pbf.buf as Uint8Array, sstart, sstart + slen);
-          pbf.pos = sstart + slen;
+          _peekLen = pbf.readVarint();
+          _peekStart = pbf.pos;
+          const h = fnv1a(pbf.buf as Uint8Array, _peekStart, _peekStart + _peekLen);
+          pbf.pos = _peekStart + _peekLen;
           tripId = TRIP_HASH.get(h) ?? null;
           pbf.pos = subEnd;
           break outer;
@@ -145,6 +155,10 @@ function readEntity(tag: number, _: null, pbf: Pbf): void {
   }
 
   if (!tripId || !TRIP_OFFSETS.has(tripId)) {
+    _entityMissed++;
+    if (_peekLen > 0 && _missedSamples.size < 3) {
+      _missedSamples.add(_td.decode((pbf.buf as Uint8Array).subarray(_peekStart, _peekStart + _peekLen)));
+    }
     pbf.pos = end;
     return;
   }
@@ -175,7 +189,10 @@ export function decodeFeedMessage(buf: Uint8Array): LiveData {
   _tripId = "";
   _skipTrip = false;
   _curOuter = null;
+  _entitySeen = 0;
+  _entityMissed = 0;
+  _missedSamples = new Set();
   const pbf = new Pbf(buf);
   pbf.readFields(readFeed, null);
-  return { tripStatus: _ts, stopOverrides: _so };
+  return { tripStatus: _ts, stopOverrides: _so, entitySeen: _entitySeen, entityMissed: _entityMissed, missedSamples: _missedSamples };
 }

@@ -2,13 +2,14 @@
  * pbf-based GTFS-RT decoder for VehiclePosition feed.
  * Mirrors the pattern in decode.ts — module-scope state, readFields/readMessage.
  *
- * VehiclePosition field numbers:
- *   FeedEntity.vehicle           = 4
- *   VehiclePosition.trip         = 1  (TripDescriptor)
- *   VehiclePosition.current_status = 4
- *   VehiclePosition.timestamp    = 5
- *   VehiclePosition.stop_id      = 7
- *   TripDescriptor.trip_id       = 1
+ * VehiclePosition field numbers (RTD-specific proto, non-standard):
+ *   FeedEntity.vehicle             = 4
+ *   VehiclePosition.trip           = 1  (TripDescriptor)
+ *   VehiclePosition.vehicle        = 2  (VehicleDescriptor)
+ *   VehiclePosition.current_status = 4  (RTD uses 4; standard proto uses 6)
+ *   VehiclePosition.timestamp      = 5  (RTD uses 5; standard proto uses 7)
+ *   VehiclePosition.stop_id        = 7  (RTD uses 7; standard proto uses 5)
+ *   TripDescriptor.trip_id         = 1
  */
 
 import Pbf from "pbf";
@@ -34,9 +35,9 @@ function readTD(tag: number, _: null, pbf: Pbf): void {
 
 function readVP(tag: number, _: null, pbf: Pbf): void {
   if (tag === 1)      pbf.readMessage(readTD, null);   // trip
-  else if (tag === 4) _status    = pbf.readVarint();   // current_status
-  else if (tag === 5) _timestamp = pbf.readVarint();   // timestamp
-  else if (tag === 7) _stopId    = readString(pbf);    // stop_id
+  else if (tag === 4) _status    = pbf.readVarint();   // current_status (RTD field 4)
+  else if (tag === 5) _timestamp = pbf.readVarint();   // timestamp (RTD field 5)
+  else if (tag === 7) _stopId    = readString(pbf);    // stop_id (RTD field 7)
 }
 
 function readEntity(tag: number, _: null, pbf: Pbf): void {

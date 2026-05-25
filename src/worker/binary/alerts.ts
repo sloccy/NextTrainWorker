@@ -10,7 +10,7 @@
  *       [u32 active_until]              // unix seconds, 0 if unspecified
  *       [u8 cause][u8 effect]
  *       [u8 header_len][header UTF-8]   // capped 200B
- *       [u16 desc_len][desc UTF-8]      // capped 512B
+ *       [u16 desc_len][desc UTF-8]      // capped 2000B
  */
 
 import type { ParsedAlert } from "../live/alerts-decode.js";
@@ -123,7 +123,7 @@ export function buildAlertsBin(alerts: ParsedAlert[], generatedAt: number): Uint
       const hBytes = _te.encode(alert.header.slice(0, 200));
       w.writeU8(Math.min(hBytes.length, 255));
       w.writeBytes(hBytes.subarray(0, 255));
-      const dBytes = _te.encode(alert.description.slice(0, 512));
+      const dBytes = _te.encode(alert.description.slice(0, 2000));
       const dLen = Math.min(dBytes.length, 65535);
       w.writeU16(dLen);
       w.writeBytes(dBytes.subarray(0, dLen));

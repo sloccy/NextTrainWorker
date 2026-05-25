@@ -109,8 +109,12 @@ export async function handleRefreshLive(env: Env, ctx: ExecutionContext): Promis
   const changed = fp !== lastFingerprint;
   lastFingerprint = fp;
 
+  const { entitySeen, entityMissed, missedSamples } = tripResult.data;
+  const missInfo = entityMissed > 0
+    ? ` missed=${entityMissed}/${entitySeen} samples=${[...missedSamples].join("|")}`
+    : ` matched=${entitySeen - entityMissed}/${entitySeen}`;
   console.log(
-    `[refresh] trips=${tripStatus.size} stops=${stopsCount} vps=${vpResult.value.length} fetch=${tFetched - tStart}ms decode=${tripResult.decodeMs}ms patch=${tPatched - tFetched}ms changed=${changed}`,
+    `[refresh] trips=${tripStatus.size} stops=${stopsCount} vps=${vpResult.value.length}${missInfo} fetch=${tFetched - tStart}ms decode=${tripResult.decodeMs}ms patch=${tPatched - tFetched}ms changed=${changed}`,
   );
 
   if (changed) {

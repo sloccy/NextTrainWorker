@@ -86,7 +86,7 @@ function readAlert(tag: number, _: null, pbf: Pbf): void {
   } else if (tag === 11) { // description_text
     _tsBest = "";
     pbf.readMessage(readTranslatedString, null);
-    _alert.description = _tsBest.slice(0, 512);
+    _alert.description = _tsBest.slice(0, 2000);
   }
 }
 
