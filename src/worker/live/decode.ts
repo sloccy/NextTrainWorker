@@ -6,7 +6,7 @@
  * We derive delaySec = liveTime - scheduledEpoch, looking up scheduledEpoch from
  * the bundled TEMPLATE_BYTES via STOP_OFFSETS.
  */
-import Pbf from "pbf";
+import { PbfReader } from "pbf";
 import { TEMPLATE_BYTES, TRIP_OFFSETS, STOP_OFFSETS } from "../generated/offsets.js";
 import { TRIP_HASH, STOP_HASH, fnv1a } from "./key-hash.js";
 import { noop } from "./pbf-util.js";
@@ -61,12 +61,12 @@ let _evHasTime = false;
 
 // ── leaf readers ─────────────────────────────────────────────────────────────
 
-function readSTE(tag: number, _: null, pbf: Pbf): void {
+function readSTE(tag: number, _: null, pbf: PbfReader): void {
   if (tag === 1) { _evDelay = pbf.readVarint(true); _evHasData = true; }
   else if (tag === 2) { _evTime = pbf.readVarint(true); _evHasTime = true; _evHasData = true; }
 }
 
-function readSTU(tag: number, _: null, pbf: Pbf): void {
+function readSTU(tag: number, _: null, pbf: PbfReader): void {
   if (tag === 4) {
     const len = pbf.readVarint();
     const s = pbf.pos;
@@ -83,7 +83,7 @@ function readSTU(tag: number, _: null, pbf: Pbf): void {
   }
 }
 
-function readTD(tag: number, _: null, pbf: Pbf): void {
+function readTD(tag: number, _: null, pbf: PbfReader): void {
   if (tag === 1) {
     const len = pbf.readVarint();
     const s = pbf.pos;
@@ -95,7 +95,7 @@ function readTD(tag: number, _: null, pbf: Pbf): void {
   }
 }
 
-function readTU(tag: number, _: null, pbf: Pbf): void {
+function readTU(tag: number, _: null, pbf: PbfReader): void {
   if (tag === 1) {
     _tdTripId = ""; _tdSchedRel = -1;
     _skipTrip = false;
@@ -131,7 +131,7 @@ function readTU(tag: number, _: null, pbf: Pbf): void {
   }
 }
 
-function readEntity(tag: number, _: null, pbf: Pbf): void {
+function readEntity(tag: number, _: null, pbf: PbfReader): void {
   if (tag !== 3) return;
   const len = pbf.readVarint();
   const start = pbf.pos;
@@ -178,7 +178,7 @@ function readEntity(tag: number, _: null, pbf: Pbf): void {
   pbf.readFields(readTU, null, end);
 }
 
-function readFeed(tag: number, _: null, pbf: Pbf): void {
+function readFeed(tag: number, _: null, pbf: PbfReader): void {
   if (tag === 2) pbf.readMessage(readEntity, null);
 }
 
@@ -202,7 +202,7 @@ export function decodeFeedMessage(buf: Uint8Array): LiveData {
   _entitySeen = 0;
   _entityMissed = 0;
   _missedSamples = new Set();
-  const pbf = new Pbf(buf);
+  const pbf = new PbfReader(buf);
   pbf.readFields(readFeed, null);
   return { tripStatus: _ts, stopOverrides: _so, entitySeen: _entitySeen, entityMissed: _entityMissed, missedSamples: _missedSamples };
 }

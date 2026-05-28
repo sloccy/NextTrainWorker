@@ -19,7 +19,7 @@
  *   Translation.language         = 2
  */
 
-import Pbf from "pbf";
+import { PbfReader } from "pbf";
 import { readString, noop } from "./pbf-util.js";
 
 export interface ParsedAlert {
@@ -42,12 +42,12 @@ let _tsLang = "";
 let _tsBest = "";
 let _hadPeriod = false;
 
-function readTranslation(tag: number, _: null, pbf: Pbf): void {
+function readTranslation(tag: number, _: null, pbf: PbfReader): void {
   if (tag === 1)      _tsText = readString(pbf); // text
   else if (tag === 2) _tsLang = readString(pbf); // language
 }
 
-function readTranslatedString(tag: number, _: null, pbf: Pbf): void {
+function readTranslatedString(tag: number, _: null, pbf: PbfReader): void {
   if (tag !== 1) return; // translation
   _tsText = ""; _tsLang = "";
   pbf.readMessage(readTranslation, null);
@@ -55,12 +55,12 @@ function readTranslatedString(tag: number, _: null, pbf: Pbf): void {
 }
 
 // Only the first active_period is used (matches reference library behaviour).
-function readTimeRange(tag: number, _: null, pbf: Pbf): void {
+function readTimeRange(tag: number, _: null, pbf: PbfReader): void {
   if (tag === 1)      _alert.activeFrom  = pbf.readVarint(); // start
   else if (tag === 2) _alert.activeUntil = pbf.readVarint(); // end
 }
 
-function readEntitySelector(tag: number, _: null, pbf: Pbf): void {
+function readEntitySelector(tag: number, _: null, pbf: PbfReader): void {
   if (tag === 2) {
     const id = readString(pbf);
     if (id) _alert.routeIds.push(id); // skip empty route_id (entity has only route_type or stop)
@@ -69,7 +69,7 @@ function readEntitySelector(tag: number, _: null, pbf: Pbf): void {
   }
 }
 
-function readAlert(tag: number, _: null, pbf: Pbf): void {
+function readAlert(tag: number, _: null, pbf: PbfReader): void {
   if (tag === 1) {        // active_period — only first
     if (!_hadPeriod) { _hadPeriod = true; pbf.readMessage(readTimeRange, null); }
     else pbf.readMessage(noop, null);
@@ -90,7 +90,7 @@ function readAlert(tag: number, _: null, pbf: Pbf): void {
   }
 }
 
-function readEntity(tag: number, _: null, pbf: Pbf): void {
+function readEntity(tag: number, _: null, pbf: PbfReader): void {
   if (tag !== 5) return; // alert
   _alert = { routeIds: [], routeTypes: [], cause: 0, effect: 0, activeFrom: 0, activeUntil: 0, header: "", description: "" };
   _hadPeriod = false;
@@ -98,13 +98,13 @@ function readEntity(tag: number, _: null, pbf: Pbf): void {
   if (_alert.header || _alert.description || _alert.routeIds.length > 0) _out.push(_alert);
 }
 
-function readFeed(tag: number, _: null, pbf: Pbf): void {
+function readFeed(tag: number, _: null, pbf: PbfReader): void {
   if (tag === 2 && _out.length < MAX_ALERTS) pbf.readMessage(readEntity, null); // entity
 }
 
 export function decodeAlertFeed(buf: Uint8Array): ParsedAlert[] {
   _out = [];
-  const pbf = new Pbf(buf);
+  const pbf = new PbfReader(buf);
   pbf.readFields(readFeed, null);
   return _out;
 }
