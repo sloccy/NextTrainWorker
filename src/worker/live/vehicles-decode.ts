@@ -12,7 +12,7 @@
  *   TripDescriptor.trip_id         = 1
  */
 
-import Pbf from "pbf";
+import { PbfReader } from "pbf";
 import { readString } from "./pbf-util.js";
 
 export interface VehicleEvent {
@@ -29,31 +29,31 @@ let _status = 0;
 let _timestamp = 0;
 let _out: VehicleEvent[];
 
-function readTD(tag: number, _: null, pbf: Pbf): void {
+function readTD(tag: number, _: null, pbf: PbfReader): void {
   if (tag === 1) _tripId = readString(pbf); // trip_id
 }
 
-function readVP(tag: number, _: null, pbf: Pbf): void {
+function readVP(tag: number, _: null, pbf: PbfReader): void {
   if (tag === 1)      pbf.readMessage(readTD, null);   // trip
   else if (tag === 4) _status    = pbf.readVarint();   // current_status (RTD field 4)
   else if (tag === 5) _timestamp = pbf.readVarint();   // timestamp (RTD field 5)
   else if (tag === 7) _stopId    = readString(pbf);    // stop_id (RTD field 7)
 }
 
-function readEntity(tag: number, _: null, pbf: Pbf): void {
+function readEntity(tag: number, _: null, pbf: PbfReader): void {
   if (tag !== 4) return; // vehicle
   _tripId = ""; _stopId = ""; _status = 2; _timestamp = 0;
   pbf.readMessage(readVP, null);
   if (_tripId && _stopId) _out.push({ tripId: _tripId, stopId: _stopId, status: _status, timestamp: _timestamp });
 }
 
-function readFeed(tag: number, _: null, pbf: Pbf): void {
+function readFeed(tag: number, _: null, pbf: PbfReader): void {
   if (tag === 2) pbf.readMessage(readEntity, null); // entity
 }
 
 export function decodeVehiclePositions(buf: Uint8Array): VehicleEvent[] {
   _out = [];
-  const pbf = new Pbf(buf);
+  const pbf = new PbfReader(buf);
   pbf.readFields(readFeed, null);
   return _out;
 }
