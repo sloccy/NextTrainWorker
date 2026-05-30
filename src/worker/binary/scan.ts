@@ -161,15 +161,24 @@ export function scanArrivalsBin(
 
   // Two-pass VP assignment: live trips (have TripUpdate data) claim VPs before
   // pure SCHED trips, since TripUpdate confirms the vehicle's trip identity.
+  // Only the 2 soonest arrivals per route:dir get location data — later trains
+  // are too far away for current vehicle position to be meaningful.
   const topEntries = entries.slice(0, outCount);
+  const vpEligible = new Set<Entry>();
+  const routeDirCount = new Map<number, number>();
+  for (const e of topEntries) {
+    const key = (e.routeIdx << 8) | e.dirCode;
+    const cnt = routeDirCount.get(key) ?? 0;
+    if (cnt < 2) { vpEligible.add(e); routeDirCount.set(key, cnt + 1); }
+  }
   const vpResult = new Map<Entry, string>();
   for (const e of topEntries) {
-    if (e.delayStatus === 0) continue;
+    if (e.delayStatus === 0 || !vpEligible.has(e)) continue;
     const s = findCurrentStop(vpMap, e.routeIdx, e.dirCode, e.monoMins);
     if (s) vpResult.set(e, s);
   }
   for (const e of topEntries) {
-    if (e.delayStatus !== 0) continue;
+    if (e.delayStatus !== 0 || !vpEligible.has(e)) continue;
     const s = findCurrentStop(vpMap, e.routeIdx, e.dirCode, e.monoMins);
     if (s) vpResult.set(e, s);
   }
