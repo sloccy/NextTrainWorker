@@ -9,53 +9,6 @@ permissions:
   pull-requests: write
 
 jobs:
-  ci:
-    if: github.actor == 'dependabot[bot]'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: actions/setup-node@v6.4.0
-        with:
-          node-version: 'lts/*'
-          cache: 'npm'
-      - run: npm ci
-      - name: Stub generated files
-        run: |
-          mkdir -p src/worker/generated
-          cat > src/worker/generated/offsets.ts << 'EOF'
-          export const TEMPLATE_BYTES: Uint8Array = new Uint8Array();
-          export const TRIP_OFFSETS: ReadonlyMap<string, Uint32Array> = new Map<string, Uint32Array>();
-          export const STOP_OFFSETS: ReadonlyMap<string, ReadonlyMap<string, Uint32Array>> = new Map<string, Map<string, Uint32Array>>();
-          export const STOP_ID_TO_SLUG: ReadonlyMap<string, string> = new Map<string, string>();
-          EOF
-          echo 'export const STATIONS_BYTES: Uint8Array = new Uint8Array();' > src/worker/generated/stations.ts
-      - run: npm run typecheck
-      - run: npm run lint
-      - run: npm test
-
-  merge:
-    needs: ci
-    if: github.actor == 'dependabot[bot]'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Fetch Dependabot metadata
-        id: meta
-        uses: dependabot/fetch-metadata@v3
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Auto-merge security updates (any semver level)
-        if: contains(github.event.pull_request.labels.*.name, 'security')
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr merge --squash --delete-branch "$PR_URL"
-
-      - name: Auto-merge non-security patch updates
-        if: |
-          steps.meta.outputs.update-type == 'version-update:semver-patch' &&
-          !contains(github.event.pull_request.labels.*.name, 'security')
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr merge --squash --delete-branch "$PR_URL"
+  auto-merge:
+    uses: sloccy/shared-ci/.github/workflows/dependabot-auto-merge.yml@main
+    secrets: inherit
