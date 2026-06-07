@@ -4,19 +4,13 @@ compatibility_date = "2024-09-23"
 workers_dev = true
 
 [triggers]
-crons = ["* * * * *", "*/2 * * * *", "0 10 * * *"]
+crons = ["* * * * *", "*/2 * * * *"]
 
 
 [[r2_buckets]]
 binding = "ARRIVALS_R2"
 bucket_name = "nexttrainworker-arrivals"
 preview_bucket_name = "nexttrainworker-arrivals-preview"
-
-[[d1_databases]]
-binding = "OTP_DB"
-database_name = "nexttrainworker-otp"
-database_id = "6f9d5a49-8837-46d6-b455-74704f7b0347"
-migrations_dir = "migrations"
 
 [observability.logs]
 enabled = true
