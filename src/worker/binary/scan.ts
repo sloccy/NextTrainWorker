@@ -7,68 +7,10 @@
  *   [u16 num_stations]
  *   index: num_stations × ([u8 slug_len][slug][u32 data_offset])
  *   data: per station: [u16 count] × ([u8 route_idx][u8 dir][u16 mono_mins][s8 delay_status])
- *   [VP section: u16 count × ([u8 route_idx][u8 dir][u16 sched_mins][u8 stop_id_len][stop_id_bytes])]
- *   [u32LE VP section offset]   ← last 4 bytes
  *
  * Response wire format for /a:
- *   [u8 count] × ([u8 route_len][route_chars][u8 dir][u8 time_hi][u8 time_lo][s8 delay_status]
- *                  [u8 at_stop_len][at_stop_bytes])
- *
- * at_stop_len = 0 means no vehicle position data for this trip.
+ *   [u8 count] × ([u8 route_len][route_chars][u8 dir][u8 time_hi][u8 time_lo][s8 delay_status])
  */
-
-const _td = new TextDecoder();
-
-/** Parse the trailing VP section into a map for O(1) lookup per entry. */
-function parseVpMap(bin: Uint8Array): Map<number, { schedMins: number; stopId: string }[]> {
-  // map key = (routeIdx << 8) | dir
-  const map = new Map<number, { schedMins: number; stopId: string }[]>();
-  if (bin.length < 6) return map; // too small to have footer + VP
-
-  const footerOff = bin.length - 4;
-  const vpStart = (bin[footerOff] | (bin[footerOff + 1] << 8) | (bin[footerOff + 2] << 16) | (bin[footerOff + 3] << 24)) >>> 0;
-  if (vpStart >= footerOff) return map; // no VP section or malformed footer
-
-  let pos = vpStart;
-  const count = bin[pos++] | (bin[pos++] << 8);
-  for (let i = 0; i < count && pos < footerOff; i++) {
-    const routeIdx = bin[pos++];
-    const dir      = bin[pos++];
-    const schedMins = bin[pos++] | (bin[pos++] << 8);
-    const slen     = bin[pos++];
-    const stopId   = _td.decode(bin.subarray(pos, pos + slen));
-    pos += slen;
-    const key = (routeIdx << 8) | dir;
-    let arr = map.get(key);
-    if (!arr) { arr = []; map.set(key, arr); }
-    arr.push({ schedMins, stopId });
-  }
-  return map;
-}
-
-/** Find the current stop for the train approaching this station entry.
- *  Consumes the matched VP entry so the same vehicle can't bleed to a later
- *  train on the same route+direction. Returns empty string if no VP available. */
-function findCurrentStop(
-  vpMap: Map<number, { schedMins: number; stopId: string }[]>,
-  routeIdx: number,
-  dirCode: number,
-  stationMonoMins: number,
-): string {
-  const vps = vpMap.get((routeIdx << 8) | dirCode);
-  if (!vps) return "";
-  let bestIdx = -1, bestMins = -1;
-  for (let i = 0; i < vps.length; i++) {
-    if (vps[i].schedMins <= stationMonoMins && vps[i].schedMins > bestMins) {
-      bestMins = vps[i].schedMins;
-      bestIdx = i;
-    }
-  }
-  if (bestIdx < 0) return "";
-  const stopId = vps[bestIdx].stopId;
-  vps.splice(bestIdx, 1);
-  return stopId;
-}
 
 export function scanArrivalsBin(
   bin: Uint8Array,
@@ -112,12 +54,9 @@ export function scanArrivalsBin(
   pos = dataOffset;
   const count = bin[pos++] | (bin[pos++] << 8);
 
-  const vpMap = parseVpMap(bin);
-
   type Entry = {
     dOff: number; dLen: number; dirCode: number;
     predictedMins: number; delayStatus: number;
-    routeIdx: number; monoMins: number;
   };
   const entries: Entry[] = [];
 
@@ -151,44 +90,15 @@ export function scanArrivalsBin(
     }
     if (!pairMatch) continue;
 
-    entries.push({ dOff, dLen, dirCode, predictedMins: monoMins + delayMins, delayStatus, routeIdx, monoMins });
+    entries.push({ dOff, dLen, dirCode, predictedMins: monoMins + delayMins, delayStatus });
   }
 
   entries.sort((a, b) => a.predictedMins - b.predictedMins);
 
   const outCount = Math.min(entries.length, 10);
-  const _te = new TextEncoder();
-
-  // Two-pass VP assignment: live trips (have TripUpdate data) claim VPs before
-  // pure SCHED trips, since TripUpdate confirms the vehicle's trip identity.
-  // Only the 2 soonest arrivals per route:dir get location data — later trains
-  // are too far away for current vehicle position to be meaningful.
-  const topEntries = entries.slice(0, outCount);
-  const vpEligible = new Set<Entry>();
-  const routeDirCount = new Map<number, number>();
-  for (const e of topEntries) {
-    const key = (e.routeIdx << 8) | e.dirCode;
-    const cnt = routeDirCount.get(key) ?? 0;
-    if (cnt < 2) { vpEligible.add(e); routeDirCount.set(key, cnt + 1); }
-  }
-  const vpResult = new Map<Entry, string>();
-  for (const e of topEntries) {
-    if (e.delayStatus === 0 || !vpEligible.has(e)) continue;
-    const s = findCurrentStop(vpMap, e.routeIdx, e.dirCode, e.monoMins);
-    if (s) vpResult.set(e, s);
-  }
-  for (const e of topEntries) {
-    if (e.delayStatus !== 0 || !vpEligible.has(e)) continue;
-    const s = findCurrentStop(vpMap, e.routeIdx, e.dirCode, e.monoMins);
-    if (s) vpResult.set(e, s);
-  }
-  const atStops: Uint8Array[] = topEntries.map(e => {
-    const s = vpResult.get(e) || '';
-    return s ? _te.encode(s) : new Uint8Array(0);
-  });
 
   let outBytes = 1; // count byte
-  for (let i = 0; i < outCount; i++) outBytes += 5 + entries[i].dLen + 1 + atStops[i].length;
+  for (let i = 0; i < outCount; i++) outBytes += 5 + entries[i].dLen;
   const res = new Uint8Array(outBytes);
   let wp = 0;
   res[wp++] = outCount;
@@ -201,9 +111,6 @@ export function scanArrivalsBin(
     res[wp++] = (timeMins >>> 8) & 0xFF;
     res[wp++] = timeMins & 0xFF;
     res[wp++] = delayStatus;
-    res[wp++] = atStops[i].length;
-    res.set(atStops[i], wp);
-    wp += atStops[i].length;
   }
   if (wp !== outBytes) throw new Error(`scan: wrote ${wp}, allocated ${outBytes}`);
   return { buf: res, generatedAt };
