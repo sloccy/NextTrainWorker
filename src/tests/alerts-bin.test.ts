@@ -6,7 +6,7 @@ import type { ParsedAlert } from "../worker/live/alerts-decode.js";
 const ROUTE_A = "A";       // "A" → "A" (direct)
 const ROUTE_B = "113B";    // "113B" → "B"
 const ROUTE_G = "113G";    // "113G" → "G"
-const ROUTE_D = "101D";    // "101D" → "D"
+const ROUTE_C = "101C";    // "101C" → "C"
 const ROUTE_E = "101E";    // "101E" → "E"
 
 function makeAlert(routeId: string, overrides?: Partial<ParsedAlert>): ParsedAlert {
@@ -65,13 +65,13 @@ describe("buildAlertsBin / scanAlerts* — count/body consistency", () => {
   });
 
   it("normal bucket (< 255 alerts) is unaffected", () => {
-    const alerts = [makeAlert(ROUTE_D), makeAlert(ROUTE_D), makeAlert(ROUTE_E)];
+    const alerts = [makeAlert(ROUTE_C), makeAlert(ROUTE_C), makeAlert(ROUTE_E)];
     const bin = buildAlertsBin(alerts, 1700000000);
 
-    const d = scanAlertsByRouteBytes(bin, "D");
+    const c = scanAlertsByRouteBytes(bin, "C");
     const e = scanAlertsByRouteBytes(bin, "E");
-    expect(d).not.toBeNull();
-    expect(d![0]).toBe(2);
+    expect(c).not.toBeNull();
+    expect(c![0]).toBe(2);
     expect(e).not.toBeNull();
     expect(e![0]).toBe(1);
   });
