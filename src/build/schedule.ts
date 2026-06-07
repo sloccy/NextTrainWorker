@@ -173,6 +173,15 @@ export async function buildSchedule(): Promise<BuiltSchedule> {
     }
   }
 
+  // Pre-compute the last-stop slug for each trip (used for terminus filtering below).
+  const tripLastSlug = new Map<string, string>();
+  for (const [tripId, stops_] of tripStopTimes) {
+    const sorted_ = stops_.slice().sort((a, b) => a.stop_sequence - b.stop_sequence);
+    const lastId = sorted_[sorted_.length - 1]?.stop_id;
+    const slug = lastId ? stopToSlug.get(lastId) : undefined;
+    if (slug) tripLastSlug.set(tripId, slug);
+  }
+
   const slugs = [...stationArrivals.keys()].sort();
   const dict = new Dictionary();
 
@@ -254,8 +263,11 @@ export async function buildSchedule(): Promise<BuiltSchedule> {
   for (const slug of slugs) {
     const arrivals = stationArrivals.get(slug)!;
     const routesByDir = new Map<string, { r: string; c: string | null; d: string; h: string }>();
+    // allTerminus: true means every trip seen for this route+dir terminates here.
+    const allTerminus = new Map<string, boolean>();
     for (const a of arrivals) {
       const rkey = `${a.route}:${a.dir}`;
+      const isTerminus = tripLastSlug.get(a.tripId) === slug;
       if (!routesByDir.has(rkey)) {
         const trip = trips.get(a.tripId)!;
         routesByDir.set(rkey, {
@@ -264,11 +276,17 @@ export async function buildSchedule(): Promise<BuiltSchedule> {
           d: a.dir,
           h: stripRoutePrefix(trip.headsign, a.route),
         });
+        allTerminus.set(rkey, isTerminus);
+      } else if (!isTerminus) {
+        allTerminus.set(rkey, false);
       }
     }
     stationEntries.push({
       k: slug,
-      r: [...routesByDir.values()].sort((a, b) => a.r.localeCompare(b.r) || a.d.localeCompare(b.d)),
+      r: [...routesByDir.entries()]
+        .filter(([rkey]) => !allTerminus.get(rkey))
+        .map(([, v]) => v)
+        .sort((a, b) => a.r.localeCompare(b.r) || a.d.localeCompare(b.d)),
     });
   }
   const stationsBin = buildStationsBin(stationEntries, generatedAt);
