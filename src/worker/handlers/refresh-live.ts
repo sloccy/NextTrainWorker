@@ -58,11 +58,9 @@ export async function handleRefreshLive(env: Env, ctx: ExecutionContext, tripRes
 
   if (changed) {
     putArrivalsBinInCache(ctx, out);
-    ctx.waitUntil(
-      writeArrivalsBin(env, out).catch((err: unknown) => {
-        console.error("[refresh] R2 write failed:", err);
-        lastFingerprint = -1;
-      }),
-    );
+    await writeArrivalsBin(env, out).catch((err: unknown) => {
+      console.error("[refresh] R2 write failed:", err);
+      lastFingerprint = -1;
+    });
   }
 }
