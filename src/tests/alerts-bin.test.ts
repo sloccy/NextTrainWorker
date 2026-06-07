@@ -3,11 +3,11 @@ import { buildAlertsBin, scanAlertsSummaryBytes, scanAlertsByRouteBytes } from "
 import type { ParsedAlert } from "../worker/live/alerts-decode.js";
 
 // Use real GTFS route IDs (keys of ROUTE_ID_TO_SHORT_NAME), not short names.
+// Always pick routes that serve Union Station — they are the most stable and
+// least likely to be suspended when RTD adjusts service.
 const ROUTE_A = "A";       // "A" → "A" (direct)
 const ROUTE_B = "113B";    // "113B" → "B"
 const ROUTE_G = "113G";    // "113G" → "G"
-const ROUTE_C = "101C";    // "101C" → "C"
-const ROUTE_E = "101E";    // "101E" → "E"
 
 function makeAlert(routeId: string, overrides?: Partial<ParsedAlert>): ParsedAlert {
   return {
@@ -65,15 +65,15 @@ describe("buildAlertsBin / scanAlerts* — count/body consistency", () => {
   });
 
   it("normal bucket (< 255 alerts) is unaffected", () => {
-    const alerts = [makeAlert(ROUTE_C), makeAlert(ROUTE_C), makeAlert(ROUTE_E)];
+    const alerts = [makeAlert(ROUTE_A), makeAlert(ROUTE_A), makeAlert(ROUTE_B)];
     const bin = buildAlertsBin(alerts, 1700000000);
 
-    const c = scanAlertsByRouteBytes(bin, "C");
-    const e = scanAlertsByRouteBytes(bin, "E");
-    expect(c).not.toBeNull();
-    expect(c![0]).toBe(2);
-    expect(e).not.toBeNull();
-    expect(e![0]).toBe(1);
+    const a = scanAlertsByRouteBytes(bin, "A");
+    const b = scanAlertsByRouteBytes(bin, "B");
+    expect(a).not.toBeNull();
+    expect(a![0]).toBe(2);
+    expect(b).not.toBeNull();
+    expect(b![0]).toBe(1);
   });
 
   it("wildcard (no routeId, rail routeType) alert fans out to all known rail routes", () => {
