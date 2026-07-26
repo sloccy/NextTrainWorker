@@ -1,13 +1,17 @@
 version: 2
 # Security updates fire immediately regardless of schedule.
+# Routine version updates are disabled (open-pull-requests-limit: 0) on every
+# ecosystem below, so every PR Dependabot opens here is a security update — this
+# is what lets the shared dependabot-auto-merge workflow merge unconditionally.
 updates:
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: monthly
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 0
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
+    open-pull-requests-limit: 0
