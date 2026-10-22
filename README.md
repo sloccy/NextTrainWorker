@@ -164,4 +164,4 @@ Tests live in `src/tests/` and run with Vitest.
 ## CI / Dependencies
 
 - **PR CI** (`.github/workflows/pr-ci.yml`) — typecheck, lint, test on every PR
-- **Security** (`.github/workflows/security.yml`, shared from `sloccy/shared-ci`) — nightly `npm audit fix`, tests, then a direct push to `main` (which deploys). A failing gate pushes nothing and opens one "Security automation is failing" issue. Needs the `WORKFLOW_TOKEN` repo secret (fine-grained PAT, Contents read/write). GitHub's Dependabot *alerts* stay on as the safety net.
+- **Security** (`.github/workflows/security.yml`, shared from `sloccy/shared-ci`) — nightly: bump every vulnerable npm package to the minimum fixed version (direct dependencies then take the newest patch in that minor; a major bump is applied automatically when that is the only fix), run the tests, push straight to `main` (which deploys). A failing gate pushes nothing and opens one "Security automation is failing" issue. Needs the `WORKFLOW_TOKEN` repo secret (fine-grained PAT, Contents read/write). Dependabot alerts and PRs are off on purpose.
