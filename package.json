@@ -33,12 +33,14 @@
     "sharp": "0.35.5",
     "undici": "7.30.1",
     "ws": "8.21.0",
-    "esbuild": "0.28.1"
+    "esbuild": "0.28.1",
+    "minimatch": "11.0.1"
   },
   "x-security-overrides": [
     "sharp",
     "undici",
     "ws",
-    "esbuild"
+    "esbuild",
+    "minimatch"
   ]
 }
